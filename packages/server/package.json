@@ -1,0 +1,14 @@
+{
+  "name": "@eliph/server",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/index.ts",
+  "dependencies": {
+    "@eliph/core": "*",
+    "fastify": "^4.26.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/uuid": "^9.0.0"
+  }
+}
