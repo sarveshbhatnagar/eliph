@@ -23,3 +23,27 @@ export function parseTransition(str: string): Transition {
 
   throw new Error(`Invalid transition string: "${str}"`)
 }
+
+export function validateGraph(graph: WorkflowGraph): string[] {
+  const errors: string[] = []
+
+  if (!graph.states['start']) {
+    errors.push('Graph must have a "start" state')
+  }
+
+  for (const stateName of Object.keys(graph.states)) {
+    const probabilistic = graph.transitions.filter(
+      t => t.from === stateName && t.type === 'probabilistic'
+    )
+    if (probabilistic.length > 0) {
+      const sum = probabilistic.reduce((acc, t) => acc + (t.weight ?? 0), 0)
+      if (Math.abs(sum - 1.0) > 0.001) {
+        errors.push(
+          `Probabilistic transitions from "${stateName}" must sum to 1.0, got ${sum.toFixed(3)}`
+        )
+      }
+    }
+  }
+
+  return errors
+}
