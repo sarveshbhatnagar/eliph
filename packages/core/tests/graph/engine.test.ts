@@ -133,6 +133,17 @@ describe('removeTransition', () => {
   })
 })
 
+describe('removeTransition — weight differentiation', () => {
+  it('only removes the probabilistic transition with the matching weight', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -.7-> approved')
+    graph = addTransition(graph, 'start -.3-> rejected')
+    graph = removeTransition(graph, 'start -.7-> approved')
+    expect(graph.transitions).toHaveLength(1)
+    expect(graph.transitions[0].weight).toBe(0.3)
+  })
+})
+
 describe('removeState', () => {
   it('removes a state and its transitions', () => {
     let graph = makeGraph()
@@ -200,6 +211,12 @@ describe('sampleNext', () => {
       { from: 'start', to: 'done', type: 'probabilistic', weight: 1.0 },
     ]
     expect(sampleNext(transitions)).toBe('done')
+  })
+})
+
+describe('sampleNext — edge cases', () => {
+  it('throws on empty transitions array', () => {
+    expect(() => sampleNext([])).toThrow('Cannot sample from empty transitions array')
   })
 })
 

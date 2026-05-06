@@ -72,7 +72,8 @@ export function removeTransition(graph: WorkflowGraph, transitionStr: string): W
           t.from === target.from &&
           t.to === target.to &&
           t.type === target.type &&
-          t.action === target.action
+          t.action === target.action &&
+          t.weight === target.weight
         )
     ),
   }
@@ -99,6 +100,9 @@ export function getNextTransitions(graph: WorkflowGraph, stateName: string): Tra
 }
 
 export function sampleNext(transitions: Transition[]): string {
+  if (transitions.length === 0) {
+    throw new Error('Cannot sample from empty transitions array')
+  }
   const rand = Math.random()
   let cumulative = 0
   for (const t of transitions) {
