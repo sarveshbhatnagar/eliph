@@ -1,4 +1,4 @@
-import { parseTransition, validateGraph, addTransition, removeTransition } from '../../src/graph/engine'
+import { parseTransition, validateGraph, addTransition, removeTransition, removeState } from '../../src/graph/engine'
 import { WorkflowGraph } from '../../src/graph/types'
 
 function makeGraph(overrides: Partial<WorkflowGraph> = {}): WorkflowGraph {
@@ -129,5 +129,40 @@ describe('removeTransition', () => {
     const copy = graph
     removeTransition(graph, 'start -> review')
     expect(copy.transitions).toHaveLength(1)
+  })
+})
+
+describe('removeState', () => {
+  it('removes a state and its transitions', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    graph = addTransition(graph, 'review -> end')
+    graph = removeState(graph, 'review')
+    expect(graph.states['review']).toBeUndefined()
+    expect(graph.transitions.filter(t => t.from === 'review' || t.to === 'review')).toHaveLength(0)
+  })
+
+  it('throws when removing "start"', () => {
+    const graph = makeGraph()
+    expect(() => removeState(graph, 'start')).toThrow('Cannot remove reserved state "start"')
+  })
+
+  it('throws when removing "end"', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> end')
+    expect(() => removeState(graph, 'end')).toThrow('Cannot remove reserved state "end"')
+  })
+
+  it('throws when state does not exist', () => {
+    const graph = makeGraph()
+    expect(() => removeState(graph, 'nonexistent')).toThrow('State "nonexistent" does not exist')
+  })
+
+  it('does not mutate the original graph', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    const copy = graph
+    removeState(graph, 'review')
+    expect(copy.states['review']).toBeDefined()
   })
 })

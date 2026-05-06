@@ -77,3 +77,19 @@ export function removeTransition(graph: WorkflowGraph, transitionStr: string): W
     ),
   }
 }
+
+export function removeState(graph: WorkflowGraph, name: string): WorkflowGraph {
+  if (name === 'start' || name === 'end') {
+    throw new Error(`Cannot remove reserved state "${name}"`)
+  }
+  if (!graph.states[name]) {
+    throw new Error(`State "${name}" does not exist`)
+  }
+  const states = { ...graph.states }
+  delete states[name]
+  return {
+    ...graph,
+    states,
+    transitions: graph.transitions.filter(t => t.from !== name && t.to !== name),
+  }
+}
