@@ -1,4 +1,5 @@
-import { parseTransition, validateGraph, addTransition, removeTransition, removeState } from '../../src/graph/engine'
+import { parseTransition, validateGraph, addTransition, removeTransition, removeState, getNextTransitions, sampleNext, requirements } from '../../src/graph/engine'
+import { Transition } from '../../src/graph/types'
 import { WorkflowGraph } from '../../src/graph/types'
 
 function makeGraph(overrides: Partial<WorkflowGraph> = {}): WorkflowGraph {
@@ -164,5 +165,57 @@ describe('removeState', () => {
     const copy = graph
     removeState(graph, 'review')
     expect(copy.states['review']).toBeDefined()
+  })
+})
+
+describe('getNextTransitions', () => {
+  it('returns outgoing transitions from a state', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    graph = addTransition(graph, 'start -> skip')
+    const transitions = getNextTransitions(graph, 'start')
+    expect(transitions).toHaveLength(2)
+  })
+
+  it('returns empty array for state with no outgoing transitions', () => {
+    const graph = makeGraph()
+    expect(getNextTransitions(graph, 'start')).toHaveLength(0)
+  })
+})
+
+describe('sampleNext', () => {
+  it('always returns a state from the given transitions', () => {
+    const transitions: Transition[] = [
+      { from: 'start', to: 'heads', type: 'probabilistic', weight: 0.5 },
+      { from: 'start', to: 'tails', type: 'probabilistic', weight: 0.5 },
+    ]
+    for (let i = 0; i < 100; i++) {
+      const result = sampleNext(transitions)
+      expect(['heads', 'tails']).toContain(result)
+    }
+  })
+
+  it('returns the only option when weight is 1.0', () => {
+    const transitions: Transition[] = [
+      { from: 'start', to: 'done', type: 'probabilistic', weight: 1.0 },
+    ]
+    expect(sampleNext(transitions)).toBe('done')
+  })
+})
+
+describe('requirements', () => {
+  it('returns symbolic transitions as requirements', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -check_todo_done-> complete')
+    graph = addTransition(graph, 'start -check_todo_not_done-> reviewing')
+    const reqs = requirements(graph, 'start')
+    expect(reqs).toHaveLength(2)
+    expect(reqs[0]).toEqual({ action: 'check_todo_done', targetState: 'complete' })
+  })
+
+  it('excludes non-symbolic transitions', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    expect(requirements(graph, 'start')).toHaveLength(0)
   })
 })

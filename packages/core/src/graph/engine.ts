@@ -93,3 +93,23 @@ export function removeState(graph: WorkflowGraph, name: string): WorkflowGraph {
     transitions: graph.transitions.filter(t => t.from !== name && t.to !== name),
   }
 }
+
+export function getNextTransitions(graph: WorkflowGraph, stateName: string): Transition[] {
+  return graph.transitions.filter(t => t.from === stateName)
+}
+
+export function sampleNext(transitions: Transition[]): string {
+  const rand = Math.random()
+  let cumulative = 0
+  for (const t of transitions) {
+    cumulative += t.weight ?? 0
+    if (rand <= cumulative) return t.to
+  }
+  return transitions[transitions.length - 1].to
+}
+
+export function requirements(graph: WorkflowGraph, stateName: string): Requirement[] {
+  return graph.transitions
+    .filter(t => t.from === stateName && t.type === 'symbolic')
+    .map(t => ({ action: t.action!, targetState: t.to }))
+}
