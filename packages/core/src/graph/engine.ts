@@ -47,3 +47,33 @@ export function validateGraph(graph: WorkflowGraph): string[] {
 
   return errors
 }
+
+export function addTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
+  const transition = parseTransition(transitionStr)
+  const states: Record<string, State> = { ...graph.states }
+
+  if (!states[transition.from]) {
+    states[transition.from] = { name: transition.from, isTerminal: transition.from === 'end' }
+  }
+  if (!states[transition.to]) {
+    states[transition.to] = { name: transition.to, isTerminal: transition.to === 'end' }
+  }
+
+  return { ...graph, states, transitions: [...graph.transitions, transition] }
+}
+
+export function removeTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
+  const target = parseTransition(transitionStr)
+  return {
+    ...graph,
+    transitions: graph.transitions.filter(
+      t =>
+        !(
+          t.from === target.from &&
+          t.to === target.to &&
+          t.type === target.type &&
+          t.action === target.action
+        )
+    ),
+  }
+}

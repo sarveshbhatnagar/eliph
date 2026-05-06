@@ -1,4 +1,4 @@
-import { parseTransition, validateGraph } from '../../src/graph/engine'
+import { parseTransition, validateGraph, addTransition, removeTransition } from '../../src/graph/engine'
 import { WorkflowGraph } from '../../src/graph/types'
 
 function makeGraph(overrides: Partial<WorkflowGraph> = {}): WorkflowGraph {
@@ -78,5 +78,56 @@ describe('validateGraph', () => {
       ],
     })
     expect(validateGraph(graph)).toEqual([])
+  })
+})
+
+describe('addTransition', () => {
+  it('adds a deterministic edge and creates implied states', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -> review')
+    expect(updated.transitions).toHaveLength(1)
+    expect(updated.states['review']).toBeDefined()
+  })
+
+  it('marks "end" state as terminal', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -> end')
+    expect(updated.states['end'].isTerminal).toBe(true)
+  })
+
+  it('does not mutate the original graph', () => {
+    const graph = makeGraph()
+    addTransition(graph, 'start -> review')
+    expect(graph.transitions).toHaveLength(0)
+  })
+
+  it('adds a symbolic transition', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -check_todo-> reviewing')
+    expect(updated.transitions[0]).toMatchObject({ type: 'symbolic', action: 'check_todo' })
+  })
+})
+
+describe('removeTransition', () => {
+  it('removes a matching transition', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    graph = removeTransition(graph, 'start -> review')
+    expect(graph.transitions).toHaveLength(0)
+  })
+
+  it('leaves states intact after removing their transition', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    graph = removeTransition(graph, 'start -> review')
+    expect(graph.states['review']).toBeDefined()
+  })
+
+  it('does not mutate the original graph', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -> review')
+    const copy = graph
+    removeTransition(graph, 'start -> review')
+    expect(copy.transitions).toHaveLength(1)
   })
 })
