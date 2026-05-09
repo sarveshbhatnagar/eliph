@@ -1,4 +1,4 @@
-import { generateSpec } from '../../src/docs-builder'
+import { generateSpec } from '../src/docs-builder'
 
 describe('generateSpec', () => {
   it('returns a valid OpenAPI 3.0 spec', async () => {
