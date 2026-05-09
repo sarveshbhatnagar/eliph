@@ -2,9 +2,25 @@ import { FastifyInstance } from 'fastify'
 import { IWorkflowStore, ISessionStore, Session, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements } from '@eliph/core'
 import { randomUUID } from 'crypto'
 
+const authed = [{ BearerAuth: [] }]
+
 export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
   return async (app: FastifyInstance) => {
-    app.post<{ Body: { workflow: string } }>('/session', async (req, reply) => {
+    app.post<{ Body: { workflow: string } }>('/session', {
+      schema: {
+        tags: ['Sessions'],
+        summary: 'Create a session for a workflow',
+        security: authed,
+        body: {
+          type: 'object',
+          required: ['workflow'],
+          properties: { workflow: { type: 'string' } },
+        },
+        response: {
+          201: { $ref: 'Session#' },
+        },
+      } as any,
+    }, async (req, reply) => {
       const graph = await workflowStore.get(req.body.workflow)
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       const session: Session = {
@@ -18,13 +34,48 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
       reply.code(201).send(session)
     })
 
-    app.delete<{ Params: { id: string } }>('/session/:id', async (req, reply) => {
+    app.delete<{ Params: { id: string } }>('/session/:id', {
+      schema: {
+        tags: ['Sessions'],
+        summary: 'Delete a session',
+        security: authed,
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+        },
+        response: { 204: { type: 'null' } },
+      } as any,
+    }, async (req, reply) => {
       await sessionStore.delete(req.params.id)
       reply.code(204).send()
     })
 
     app.get<{ Params: { id: string }; Querystring: { workflow: string } }>(
-      '/session/:id/state', async (req, reply) => {
+      '/session/:id/state', {
+        schema: {
+          tags: ['Sessions'],
+          summary: 'Get current state and available next transitions',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+          },
+          querystring: {
+            type: 'object',
+            required: ['workflow'],
+            properties: { workflow: { type: 'string' } },
+          },
+          response: {
+            200: {
+              type: 'object',
+              properties: {
+                currentState: { type: 'string' },
+                nextTransitions: { type: 'array', items: { $ref: 'Transition#' } },
+              },
+            },
+          },
+        } as any,
+      }, async (req, reply) => {
         const [session, graph] = await Promise.all([
           sessionStore.get(req.params.id),
           workflowStore.get(req.query.workflow),
@@ -35,7 +86,25 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
     )
 
     app.get<{ Params: { id: string }; Querystring: { workflow: string } }>(
-      '/session/:id/next', async (req, reply) => {
+      '/session/:id/next', {
+        schema: {
+          tags: ['Sessions'],
+          summary: 'Get next transitions from the current state',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+          },
+          querystring: {
+            type: 'object',
+            required: ['workflow'],
+            properties: { workflow: { type: 'string' } },
+          },
+          response: {
+            200: { type: 'array', items: { $ref: 'Transition#' } },
+          },
+        } as any,
+      }, async (req, reply) => {
         const [session, graph] = await Promise.all([
           sessionStore.get(req.params.id),
           workflowStore.get(req.query.workflow),
@@ -46,7 +115,28 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
     )
 
     app.post<{ Params: { id: string }; Body: { workflow: string; completed_action?: string } }>(
-      '/session/:id/advance', async (req, reply) => {
+      '/session/:id/advance', {
+        schema: {
+          tags: ['Sessions'],
+          summary: 'Advance session to the next state',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+          },
+          body: {
+            type: 'object',
+            required: ['workflow'],
+            properties: {
+              workflow: { type: 'string' },
+              completed_action: { type: 'string' },
+            },
+          },
+          response: {
+            200: { $ref: 'Session#' },
+          },
+        } as any,
+      }, async (req, reply) => {
         const [session, graph] = await Promise.all([
           sessionStore.get(req.params.id),
           workflowStore.get(req.body.workflow),
@@ -64,7 +154,28 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
     )
 
     app.post<{ Params: { id: string }; Body: { workflow: string; target_state?: string } }>(
-      '/session/:id/reset', async (req, reply) => {
+      '/session/:id/reset', {
+        schema: {
+          tags: ['Sessions'],
+          summary: 'Reset session to a target state (default: start)',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+          },
+          body: {
+            type: 'object',
+            required: ['workflow'],
+            properties: {
+              workflow: { type: 'string' },
+              target_state: { type: 'string' },
+            },
+          },
+          response: {
+            200: { $ref: 'Session#' },
+          },
+        } as any,
+      }, async (req, reply) => {
         const [session, graph] = await Promise.all([
           sessionStore.get(req.params.id),
           workflowStore.get(req.body.workflow),
@@ -81,7 +192,25 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
     )
 
     app.get<{ Params: { id: string }; Querystring: { workflow: string } }>(
-      '/session/:id/requirements', async (req, reply) => {
+      '/session/:id/requirements', {
+        schema: {
+          tags: ['Sessions'],
+          summary: 'Get action requirements for the current state',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { id: { type: 'string' } },
+          },
+          querystring: {
+            type: 'object',
+            required: ['workflow'],
+            properties: { workflow: { type: 'string' } },
+          },
+          response: {
+            200: { type: 'array', items: { type: 'string' } },
+          },
+        } as any,
+      }, async (req, reply) => {
         const [session, graph] = await Promise.all([
           sessionStore.get(req.params.id),
           workflowStore.get(req.query.workflow),
