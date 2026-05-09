@@ -1,4 +1,5 @@
 import Fastify, { FastifyInstance } from 'fastify'
+import swagger from '@fastify/swagger'
 import { IWorkflowStore, ISessionStore, IApiKeyStore } from '@eliph/core'
 import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
@@ -80,6 +81,23 @@ export function registerSharedSchemas(app: FastifyInstance): void {
 
 export function buildApp(stores: Stores): FastifyInstance {
   const app = Fastify()
+
+  app.register(swagger, {
+    openapi: {
+      info: {
+        title: 'Eliph API',
+        version: '1.0.0',
+      },
+      components: {
+        securitySchemes: {
+          BearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+          },
+        },
+      },
+    },
+  })
 
   registerSharedSchemas(app)
 
