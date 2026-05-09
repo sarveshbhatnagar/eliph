@@ -58,7 +58,7 @@ async function main() {
 
 function swaggerUiHtml(): string {
   return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <title>Eliph API Docs</title>
   <meta charset="utf-8"/>
@@ -73,7 +73,7 @@ window.onload = () => {
   SwaggerUIBundle({
     url: './openapi.json',
     dom_id: '#swagger-ui',
-    presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+    presets: [SwaggerUIBundle.presets.apis],
     layout: 'BaseLayout',
     deepLinking: true
   })
