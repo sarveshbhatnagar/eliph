@@ -1,11 +1,7 @@
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore } from '@eliph/core'
+import { createStores } from '@eliph/sqlite'
 import { buildApp } from './app'
 
-const stores = {
-  workflowStore: new InMemoryWorkflowStore(),
-  sessionStore: new InMemorySessionStore(),
-  apiKeyStore: new InMemoryApiKeyStore(),
-}
+const stores = createStores('./eliph.db')
 
 const app = buildApp(stores)
 
