@@ -1,10 +1,48 @@
 import Database from 'better-sqlite3'
 import { IWorkflowStore, WorkflowGraph } from '@eliph/core'
+
 export class SqliteWorkflowStore implements IWorkflowStore {
   constructor(private db: Database.Database) {}
-  async get(_name: string): Promise<WorkflowGraph | null> { throw new Error('not implemented') }
-  async list(): Promise<string[]> { throw new Error('not implemented') }
-  async search(_query: string): Promise<string[]> { throw new Error('not implemented') }
-  async save(_graph: WorkflowGraph): Promise<void> { throw new Error('not implemented') }
-  async delete(_name: string): Promise<void> { throw new Error('not implemented') }
+
+  async get(name: string): Promise<WorkflowGraph | null> {
+    const row = this.db
+      .prepare('SELECT data FROM workflows WHERE name = ?')
+      .get(name) as { data: string } | undefined
+    return row ? (JSON.parse(row.data) as WorkflowGraph) : null
+  }
+
+  async list(): Promise<string[]> {
+    const rows = this.db
+      .prepare('SELECT name FROM workflows')
+      .all() as { name: string }[]
+    return rows.map(r => r.name)
+  }
+
+  async search(query: string): Promise<string[]> {
+    const q = query.toLowerCase()
+    const rows = this.db
+      .prepare('SELECT name, description FROM workflows')
+      .all() as { name: string; description: string }[]
+    return rows
+      .filter(r => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q))
+      .map(r => r.name)
+  }
+
+  async save(graph: WorkflowGraph): Promise<void> {
+    const now = new Date().toISOString()
+    this.db
+      .prepare(`
+        INSERT INTO workflows (name, description, created_at, updated_at, data)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(name) DO UPDATE SET
+          description = excluded.description,
+          updated_at  = excluded.updated_at,
+          data        = excluded.data
+      `)
+      .run(graph.name, graph.description, now, now, JSON.stringify(graph))
+  }
+
+  async delete(name: string): Promise<void> {
+    this.db.prepare('DELETE FROM workflows WHERE name = ?').run(name)
+  }
 }
