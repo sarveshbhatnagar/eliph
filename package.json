@@ -6,7 +6,8 @@
     "test": "jest",
     "test:core": "jest --selectProjects core",
     "test:server": "jest --selectProjects server",
-    "test:mcp": "jest --selectProjects mcp"
+    "test:mcp": "jest --selectProjects mcp",
+    "docs": "ts-node -T packages/server/src/docs-builder.ts"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
