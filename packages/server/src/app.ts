@@ -11,8 +11,77 @@ export interface Stores {
   apiKeyStore: IApiKeyStore
 }
 
+export function registerSharedSchemas(app: FastifyInstance): void {
+  app.addSchema({
+    $id: 'State',
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      isTerminal: { type: 'boolean' },
+    },
+    required: ['name', 'isTerminal'],
+  })
+
+  app.addSchema({
+    $id: 'Transition',
+    type: 'object',
+    properties: {
+      from: { type: 'string' },
+      to: { type: 'string' },
+      type: { type: 'string', enum: ['deterministic', 'probabilistic', 'symbolic'] },
+      weight: { type: 'number' },
+      action: { type: 'string' },
+    },
+    required: ['from', 'to', 'type'],
+  })
+
+  app.addSchema({
+    $id: 'WorkflowGraph',
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      description: { type: 'string' },
+      states: {
+        type: 'object',
+        additionalProperties: { $ref: 'State#' },
+      },
+      transitions: {
+        type: 'array',
+        items: { $ref: 'Transition#' },
+      },
+    },
+    required: ['name', 'description', 'states', 'transitions'],
+  })
+
+  app.addSchema({
+    $id: 'Session',
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      workflowName: { type: 'string' },
+      currentState: { type: 'string' },
+      history: { type: 'array', items: { type: 'string' } },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+    required: ['id', 'workflowName', 'currentState', 'history', 'createdAt'],
+  })
+
+  app.addSchema({
+    $id: 'ApiKey',
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      label: { type: 'string' },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+    required: ['id', 'label', 'createdAt'],
+  })
+}
+
 export function buildApp(stores: Stores): FastifyInstance {
   const app = Fastify()
+
+  registerSharedSchemas(app)
 
   app.addHook('preHandler', authMiddleware(stores.apiKeyStore))
 
