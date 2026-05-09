@@ -1,4 +1,5 @@
 import Fastify, { FastifyInstance } from 'fastify'
+import cors from '@fastify/cors'
 import { IWorkflowStore, ISessionStore, IApiKeyStore } from '@eliph/core'
 import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
@@ -80,6 +81,8 @@ export function registerSharedSchemas(app: FastifyInstance): void {
 
 export function buildApp(stores: Stores): FastifyInstance {
   const app = Fastify()
+
+  app.register(cors, { origin: true })
 
   registerSharedSchemas(app)
 

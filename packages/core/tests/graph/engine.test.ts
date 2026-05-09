@@ -107,6 +107,33 @@ describe('addTransition', () => {
     const updated = addTransition(graph, 'start -check_todo-> reviewing')
     expect(updated.transitions[0]).toMatchObject({ type: 'symbolic', action: 'check_todo' })
   })
+
+  it('adds a chain of deterministic transitions in one call', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -> review -> complete')
+    expect(updated.transitions).toHaveLength(2)
+    expect(updated.transitions[0]).toEqual({ from: 'start', to: 'review', type: 'deterministic' })
+    expect(updated.transitions[1]).toEqual({ from: 'review', to: 'complete', type: 'deterministic' })
+    expect(updated.states['review']).toBeDefined()
+    expect(updated.states['complete']).toBeDefined()
+  })
+
+  it('adds a mixed chain (probabilistic + deterministic) in one call', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -.5-> tails -> end')
+    expect(updated.transitions).toHaveLength(2)
+    expect(updated.transitions[0]).toEqual({ from: 'start', to: 'tails', type: 'probabilistic', weight: 0.5 })
+    expect(updated.transitions[1]).toEqual({ from: 'tails', to: 'end', type: 'deterministic' })
+    expect(updated.states['end'].isTerminal).toBe(true)
+  })
+
+  it('adds a symbolic chain in one call', () => {
+    const graph = makeGraph()
+    const updated = addTransition(graph, 'start -approve-> review -publish-> live')
+    expect(updated.transitions).toHaveLength(2)
+    expect(updated.transitions[0]).toMatchObject({ type: 'symbolic', action: 'approve' })
+    expect(updated.transitions[1]).toMatchObject({ type: 'symbolic', action: 'publish' })
+  })
 })
 
 describe('removeTransition', () => {

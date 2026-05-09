@@ -49,6 +49,10 @@ export function validateGraph(graph: WorkflowGraph): string[] {
 }
 
 export function addTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
+  return splitTransitionChain(transitionStr).reduce((g, seg) => addSingleTransition(g, seg), graph)
+}
+
+function addSingleTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
   const transition = parseTransition(transitionStr)
   const states: Record<string, State> = { ...graph.states }
 
@@ -60,6 +64,23 @@ export function addTransition(graph: WorkflowGraph, transitionStr: string): Work
   }
 
   return { ...graph, states, transitions: [...graph.transitions, transition] }
+}
+
+// Splits "start -.5-> tails -> end" into ["start -.5-> tails", "tails -> end"]
+function splitTransitionChain(chain: string): string[] {
+  const results: string[] = []
+  let remaining = chain.trim()
+
+  while (remaining) {
+    const m = remaining.match(/^(\w+)\s*(-[^->]+->|->)\s*(\w+)(.*)$/)
+    if (!m) throw new Error(`Invalid transition string: "${chain}"`)
+    const [, from, arrow, to, rest] = m
+    results.push(`${from} ${arrow} ${to}`)
+    remaining = rest.trim()
+    if (remaining) remaining = `${to} ${remaining}`
+  }
+
+  return results
 }
 
 export function removeTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {

@@ -25,6 +25,7 @@ export async function generateSpec(): Promise<object> {
         description: 'Automata-driven agent workflow engine',
         version: '0.1.0',
       },
+      servers: [{ url: 'http://localhost:3000', description: 'Local dev server' }],
       components: {
         securitySchemes: {
           BearerAuth: { type: 'http', scheme: 'bearer' },
@@ -52,11 +53,11 @@ async function main() {
   const outDir = resolve(__dirname, '../../../docs-site')
   mkdirSync(outDir, { recursive: true })
   writeFileSync(resolve(outDir, 'openapi.json'), JSON.stringify(spec, null, 2))
-  writeFileSync(resolve(outDir, 'index.html'), swaggerUiHtml())
+  writeFileSync(resolve(outDir, 'index.html'), swaggerUiHtml(spec))
   console.log(`Docs generated in ${outDir}`)
 }
 
-function swaggerUiHtml(): string {
+function swaggerUiHtml(spec: object): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -71,7 +72,7 @@ function swaggerUiHtml(): string {
 <script>
 window.onload = () => {
   SwaggerUIBundle({
-    url: './openapi.json',
+    spec: ${JSON.stringify(spec)},
     dom_id: '#swagger-ui',
     presets: [SwaggerUIBundle.presets.apis],
     layout: 'BaseLayout',
