@@ -11,7 +11,7 @@
     "test:mcp": "jest --selectProjects mcp",
     "docs": "ts-node -T packages/server/src/docs-builder.ts",
     "docs:serve": "npm run docs && npx serve docs-site -l 4001",
-    "build": "esbuild packages/server/src/index.ts --bundle --platform=node --outfile=dist/server.js --external:better-sqlite3 --external:bcryptjs",
+    "build": "esbuild packages/server/src/index.ts --bundle --platform=node --outfile=dist/server.js --external:better-sqlite3 --external:bcryptjs && esbuild packages/mcp/src/http-server.ts --bundle --platform=node --outfile=dist/mcp-server.js",
     "start:prod": "node dist/server.js",
     "start": "concurrently --names \"api,docs\" --prefix-colors \"cyan,magenta\" \"ts-node -T packages/server/src/index.ts\" \"npm run docs:serve\""
   },

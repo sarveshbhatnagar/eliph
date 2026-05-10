@@ -11,7 +11,22 @@ module.exports = {
       restart_delay: 2000,
       env: {
         NODE_ENV: 'production',
-        ADMIN_SECRET: 'replace-with-a-long-random-secret',
+        ADMIN_SECRET: '2300ef5042c5d91d8ebde8366ef6f457452dfbd3daee99d8d41b7c473a708e1f',
+      },
+    },
+    {
+      name: 'eliph-mcp',
+      script: 'dist/mcp-server.js',
+      cwd: '/Users/sarvesh/Desktop/eliph',
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_restarts: 10,
+      restart_delay: 2000,
+      env: {
+        NODE_ENV: 'production',
+        ELIPH_API_URL: 'http://localhost:4000',
+        MCP_PORT: '4002',
       },
     },
   ],

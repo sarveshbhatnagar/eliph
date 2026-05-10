@@ -6,7 +6,7 @@ import { makeAdvanceTools } from './tools/advance'
 
 type ToolHandler = (args: Record<string, any>) => Promise<any>
 
-const toolMeta: Record<string, { description: string; inputSchema: object }> = {
+export const toolMeta: Record<string, { description: string; inputSchema: object }> = {
   procedures: {
     description: 'Search for workflow procedures by name.',
     inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term' } } },
