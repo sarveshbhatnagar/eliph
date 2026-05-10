@@ -10,7 +10,7 @@
     "test:server": "jest --selectProjects server",
     "test:mcp": "jest --selectProjects mcp",
     "docs": "ts-node -T packages/server/src/docs-builder.ts",
-    "docs:serve": "npm run docs && npx serve docs-site -l 8080",
+    "docs:serve": "npm run docs && npx serve docs-site -l 4001",
     "start": "concurrently --names \"api,docs\" --prefix-colors \"cyan,magenta\" \"ts-node -T packages/server/src/index.ts\" \"npm run docs:serve\""
   },
   "devDependencies": {
