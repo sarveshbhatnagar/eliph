@@ -1,55 +1,70 @@
 import { createStores } from '../src/index'
 
 describe('SqliteApiKeyStore', () => {
-  function store() {
-    return createStores(':memory:').apiKeyStore
+  async function setup() {
+    const s = createStores(':memory:')
+    const { record: orgKey } = await s.orgKeyStore.create('test-org', 100)
+    return { stores: s, orgKeyId: orgKey.id }
   }
 
   it('create returns a rawKey and a record', async () => {
-    const { rawKey, record } = await store().create('test-key')
+    const { stores, orgKeyId } = await setup()
+    const { rawKey, record } = await stores.apiKeyStore.create('test-key', orgKeyId)
     expect(typeof rawKey).toBe('string')
     expect(rawKey.length).toBeGreaterThan(0)
     expect(record.label).toBe('test-key')
+    expect(record.orgKeyId).toBe(orgKeyId)
     expect(record.id).toBeTruthy()
     expect(record.createdAt).toBeInstanceOf(Date)
   })
 
   it('find returns the record for the correct rawKey', async () => {
-    const s = store()
-    const { rawKey, record } = await s.create('my-key')
-    const found = await s.find(rawKey)
+    const { stores, orgKeyId } = await setup()
+    const { rawKey, record } = await stores.apiKeyStore.create('my-key', orgKeyId)
+    const found = await stores.apiKeyStore.find(rawKey)
     expect(found).not.toBeNull()
     expect(found!.id).toBe(record.id)
     expect(found!.label).toBe('my-key')
+    expect(found!.orgKeyId).toBe(orgKeyId)
   })
 
   it('find returns null for a wrong key', async () => {
-    const s = store()
-    await s.create('my-key')
-    expect(await s.find('definitely-wrong')).toBeNull()
+    const { stores, orgKeyId } = await setup()
+    await stores.apiKeyStore.create('my-key', orgKeyId)
+    expect(await stores.apiKeyStore.find('definitely-wrong')).toBeNull()
   })
 
   it('list returns all keys without the key hash', async () => {
-    const s = store()
-    await s.create('key-a')
-    await s.create('key-b')
-    const keys = await s.list()
+    const { stores, orgKeyId } = await setup()
+    await stores.apiKeyStore.create('key-a', orgKeyId)
+    await stores.apiKeyStore.create('key-b', orgKeyId)
+    const keys = await stores.apiKeyStore.list()
     expect(keys).toHaveLength(2)
     expect(keys.map(k => k.label)).toEqual(expect.arrayContaining(['key-a', 'key-b']))
     keys.forEach(k => expect((k as any).key).toBeUndefined())
   })
 
+  it('list filters by orgKeyId', async () => {
+    const { stores, orgKeyId } = await setup()
+    const { record: org2 } = await stores.orgKeyStore.create('other-org', 100)
+    await stores.apiKeyStore.create('key-a', orgKeyId)
+    await stores.apiKeyStore.create('key-b', org2.id)
+    const keys = await stores.apiKeyStore.list(orgKeyId)
+    expect(keys).toHaveLength(1)
+    expect(keys[0].label).toBe('key-a')
+  })
+
   it('delete removes the key', async () => {
-    const s = store()
-    const { record } = await s.create('my-key')
-    await s.delete(record.id)
-    expect(await s.list()).toHaveLength(0)
+    const { stores, orgKeyId } = await setup()
+    const { record } = await stores.apiKeyStore.create('my-key', orgKeyId)
+    await stores.apiKeyStore.delete(record.id)
+    expect(await stores.apiKeyStore.list()).toHaveLength(0)
   })
 
   it('deleted key can no longer be found', async () => {
-    const s = store()
-    const { rawKey, record } = await s.create('my-key')
-    await s.delete(record.id)
-    expect(await s.find(rawKey)).toBeNull()
+    const { stores, orgKeyId } = await setup()
+    const { rawKey, record } = await stores.apiKeyStore.create('my-key', orgKeyId)
+    await stores.apiKeyStore.delete(record.id)
+    expect(await stores.apiKeyStore.find(rawKey)).toBeNull()
   })
 })
