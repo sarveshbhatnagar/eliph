@@ -1,8 +1,9 @@
 import Fastify, { FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
-import { IWorkflowStore, ISessionStore, IApiKeyStore } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, IApiKeyStore, IOrgKeyStore } from '@eliph/core'
 import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
+import { orgKeysRoutes } from './routes/orgkeys'
 import { proceduresRoutes } from './routes/procedures'
 import { sessionsRoutes } from './routes/sessions'
 
@@ -10,6 +11,7 @@ export interface Stores {
   workflowStore: IWorkflowStore
   sessionStore: ISessionStore
   apiKeyStore: IApiKeyStore
+  orgKeyStore: IOrgKeyStore
 }
 
 export function registerSharedSchemas(app: FastifyInstance): void {
@@ -74,25 +76,28 @@ export function registerSharedSchemas(app: FastifyInstance): void {
       id: { type: 'string' },
       label: { type: 'string' },
       createdAt: { type: 'string', format: 'date-time' },
+      orgKeyId: { type: 'string' },
     },
-    required: ['id', 'label', 'createdAt'],
+    required: ['id', 'label', 'createdAt', 'orgKeyId'],
   })
 }
 
 export function buildApp(stores: Stores): FastifyInstance {
   const app = Fastify()
 
+  app.decorateRequest('authContext', null)
   app.register(cors, { origin: true })
 
   registerSharedSchemas(app)
 
-  app.get('/health', { config: { skipAuth: true } }, async (_req, reply) => {
+  app.get('/health', async (_req, reply) => {
     reply.send({ status: 'ok', ts: new Date().toISOString() })
   })
 
-  app.addHook('preHandler', authMiddleware(stores.apiKeyStore))
+  app.addHook('preHandler', authMiddleware(stores.orgKeyStore, stores.apiKeyStore))
 
-  app.register(keysRoutes(stores.apiKeyStore))
+  app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
+  app.register(orgKeysRoutes(stores.orgKeyStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore))
 
