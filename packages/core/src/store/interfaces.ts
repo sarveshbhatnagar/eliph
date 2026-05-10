@@ -1,5 +1,5 @@
 import { WorkflowGraph } from '../graph/types'
-import { Session, ApiKey } from '../session/types'
+import { Session, ApiKey, OrgKey } from '../session/types'
 
 export interface IWorkflowStore {
   get(name: string): Promise<WorkflowGraph | null>
@@ -16,9 +16,17 @@ export interface ISessionStore {
   findByState(workflowName: string, state: string): Promise<Session[]>
 }
 
+export interface IOrgKeyStore {
+  create(label: string, keyLimit: number): Promise<{ rawKey: string; record: OrgKey }>
+  find(rawKey: string): Promise<OrgKey | null>
+  list(): Promise<Array<OrgKey & { keyCount: number }>>
+  delete(id: string): Promise<void>
+  countKeys(orgKeyId: string): Promise<number>
+}
+
 export interface IApiKeyStore {
   find(rawKey: string): Promise<ApiKey | null>
-  create(label: string): Promise<{ rawKey: string; record: ApiKey }>
+  create(label: string, orgKeyId: string): Promise<{ rawKey: string; record: ApiKey }>
   delete(id: string): Promise<void>
-  list(): Promise<Omit<ApiKey, 'key'>[]>
+  list(orgKeyId?: string): Promise<Omit<ApiKey, 'key'>[]>
 }
