@@ -48,7 +48,7 @@ describe('InMemoryWorkflowStore', () => {
     await store.save(makeGraph('onboarding'))
     await store.save(makeGraph('checkout'))
     const results = await store.search('board')
-    expect(results).toContain('onboarding')
+    expect(results.map((r: any) => r.name)).toContain('onboarding')
     expect(results).not.toContain('checkout')
   })
 

@@ -39,13 +39,13 @@ describe('SqliteWorkflowStore', () => {
     const s = store()
     await s.save(makeGraph('coin_flip'))
     await s.save(makeGraph('onboarding'))
-    expect(await s.search('coin')).toEqual(['coin_flip'])
+    expect(await s.search('coin')).toEqual([{ name: 'coin_flip', description: 'a test workflow' }])
   })
 
   it('searches by description', async () => {
     const s = store()
     await s.save(makeGraph('flow', 'handles user signup'))
-    expect(await s.search('signup')).toEqual(['flow'])
+    expect(await s.search('signup')).toEqual([{ name: 'flow', description: 'handles user signup' }])
   })
 
   it('overwrites existing workflow on save', async () => {

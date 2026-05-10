@@ -60,7 +60,7 @@ describe('GET /procedures', () => {
     await stores.workflowStore.save({ name: 'onboarding', description: 'user onboarding', states: { start: { name: 'start', isTerminal: false } }, transitions: [] })
     const res = await app.inject({ method: 'GET', url: '/procedures?q=onboard', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toContain('onboarding')
+    expect(res.json().map((r: any) => r.name)).toContain('onboarding')
   })
 })
 

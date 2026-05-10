@@ -1,4 +1,4 @@
-import { IWorkflowStore } from '../interfaces'
+import { IWorkflowStore, WorkflowSummary } from '../interfaces'
 import { WorkflowGraph } from '../../graph/types'
 
 export class InMemoryWorkflowStore implements IWorkflowStore {
@@ -12,11 +12,11 @@ export class InMemoryWorkflowStore implements IWorkflowStore {
     return Array.from(this.store.keys())
   }
 
-  async search(query: string): Promise<string[]> {
+  async search(query: string): Promise<WorkflowSummary[]> {
     const q = query.toLowerCase()
     return Array.from(this.store.values())
       .filter(g => g.name.toLowerCase().includes(q) || g.description.toLowerCase().includes(q))
-      .map(g => g.name)
+      .map(g => ({ name: g.name, description: g.description }))
   }
 
   async save(graph: WorkflowGraph): Promise<void> {

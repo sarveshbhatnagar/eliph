@@ -1,10 +1,15 @@
 import { WorkflowGraph } from '../graph/types'
 import { Session, ApiKey, OrgKey } from '../session/types'
 
+export interface WorkflowSummary {
+  name: string
+  description: string
+}
+
 export interface IWorkflowStore {
   get(name: string): Promise<WorkflowGraph | null>
   list(): Promise<string[]>
-  search(query: string): Promise<string[]>
+  search(query: string): Promise<WorkflowSummary[]>
   save(graph: WorkflowGraph): Promise<void>
   delete(name: string): Promise<void>
 }

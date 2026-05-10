@@ -8,8 +8,8 @@ type ToolHandler = (args: Record<string, any>) => Promise<any>
 
 export const toolMeta: Record<string, { description: string; inputSchema: object }> = {
   procedures: {
-    description: 'Search eliph for available workflow procedures (state machines). Eliph is a workflow engine — procedures define multi-step processes with states and transitions. Call this first to discover what workflows exist before creating sessions. Returns a list of procedure names matching the query.',
-    inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term to filter procedures by name' } } },
+    description: 'Search eliph for available workflow procedures. Returns { name, description }[] so you can understand what each workflow does without extra calls. Call with no query to list everything, or pass a term to filter by name or description. Use the description to decide which procedure fits the current task, then call procedure(name) to get the full state/transition graph.',
+    inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term — filters by name or description substring' } } },
   },
   procedure: {
     description: 'Get the full definition of a single eliph workflow procedure — its states, transitions, and description. Use this to understand what a workflow does and what paths are available before creating a session.',

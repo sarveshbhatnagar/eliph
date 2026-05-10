@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { IWorkflowStore, WorkflowGraph } from '@eliph/core'
+import { IWorkflowStore, WorkflowGraph, WorkflowSummary } from '@eliph/core'
 
 export class SqliteWorkflowStore implements IWorkflowStore {
   constructor(private db: Database.Database) {}
@@ -18,14 +18,14 @@ export class SqliteWorkflowStore implements IWorkflowStore {
     return rows.map(r => r.name)
   }
 
-  async search(query: string): Promise<string[]> {
+  async search(query: string): Promise<WorkflowSummary[]> {
     const q = query.toLowerCase()
     const rows = this.db
       .prepare('SELECT name, description FROM workflows')
       .all() as { name: string; description: string }[]
     return rows
       .filter(r => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q))
-      .map(r => r.name)
+      .map(r => ({ name: r.name, description: r.description }))
   }
 
   async save(graph: WorkflowGraph): Promise<void> {

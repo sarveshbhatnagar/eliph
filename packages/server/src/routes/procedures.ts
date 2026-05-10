@@ -8,14 +8,23 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
     app.get<{ Querystring: { q?: string } }>('/procedures', {
       schema: {
         tags: ['Procedures'],
-        summary: 'Search procedures by name',
+        summary: 'Search procedures by name or description',
         security: authed,
         querystring: {
           type: 'object',
           properties: { q: { type: 'string' } },
         },
         response: {
-          200: { type: 'array', items: { type: 'string' } },
+          200: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string' },
+                description: { type: 'string' },
+              },
+            },
+          },
         },
       } as any,
     }, async (req, reply) => {
