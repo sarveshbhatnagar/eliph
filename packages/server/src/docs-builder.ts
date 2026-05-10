@@ -29,7 +29,7 @@ export async function generateSpec(): Promise<object> {
         description: 'Automata-driven agent workflow engine',
         version: '0.1.0',
       },
-      servers: [{ url: 'http://localhost:3000', description: 'Local dev server' }],
+      servers: [{ url: process.env.API_URL ?? 'https://eliph-api.revalent.ai', description: 'API' }],
       components: {
         securitySchemes: {
           BearerAuth: { type: 'http', scheme: 'bearer' },

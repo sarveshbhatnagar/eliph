@@ -1,13 +1,14 @@
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore } from '@eliph/core'
 import { buildMcpServer } from './index'
 
-const stores = {
-  workflowStore: new InMemoryWorkflowStore(),
-  sessionStore: new InMemorySessionStore(),
-  apiKeyStore: new InMemoryApiKeyStore(),
+const apiUrl = process.env.ELIPH_API_URL ?? 'https://eliph-api.revalent.ai'
+const apiKey = process.env.ELIPH_API_KEY
+
+if (!apiKey) {
+  console.error('Error: ELIPH_API_KEY env var is required')
+  process.exit(1)
 }
 
-buildMcpServer(stores).start().catch((err) => {
+buildMcpServer(apiUrl, apiKey).start().catch((err) => {
   console.error(err)
   process.exit(1)
 })

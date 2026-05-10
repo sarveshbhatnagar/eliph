@@ -1,24 +1,14 @@
-import { IWorkflowStore, WorkflowGraph } from '@eliph/core'
+import { ApiClient } from '../client'
 
-export function makeProcedureTools(workflowStore: IWorkflowStore) {
+export function makeProcedureTools(client: ApiClient) {
   return {
-    procedures: async (args: { search_query?: string }) => {
-      return await workflowStore.search(args.search_query ?? '')
-    },
-    procedure: async (args: { workflow_name: string }) => {
-      const graph = await workflowStore.get(args.workflow_name)
-      if (!graph) throw new Error(`Workflow "${args.workflow_name}" not found`)
-      return graph
-    },
-    create_procedure: async (args: { workflow_name: string; description: string }) => {
-      const graph: WorkflowGraph = {
-        name: args.workflow_name,
-        description: args.description,
-        states: { start: { name: 'start', isTerminal: false } },
-        transitions: [],
-      }
-      await workflowStore.save(graph)
-      return graph
-    },
+    procedures: async (args: { search_query?: string }) =>
+      client.request('GET', `/procedures?q=${encodeURIComponent(args.search_query ?? '')}`),
+
+    procedure: async (args: { workflow_name: string }) =>
+      client.request('GET', `/procedure/${encodeURIComponent(args.workflow_name)}`),
+
+    create_procedure: async (args: { workflow_name: string; description: string }) =>
+      client.request('POST', '/procedure', { workflow_name: args.workflow_name, description: args.description }),
   }
 }
