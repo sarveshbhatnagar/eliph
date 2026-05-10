@@ -15,6 +15,10 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     description: 'Get the full definition of a single eliph workflow procedure — its states, transitions, and description. Use this to understand what a workflow does and what paths are available before creating a session.',
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
+  delete_procedure: {
+    description: 'Permanently delete a workflow procedure and all its states and transitions. Sessions that were running against this procedure will still exist but cannot advance. Use with care.',
+    inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
+  },
   create_procedure: {
     description: 'Create a new eliph workflow procedure (state machine). A procedure defines a reusable multi-step process. After creating, use add_transition() to define the paths between states. Typical flow: create_procedure → add_transition → create_session.',
     inputSchema: { type: 'object', required: ['workflow_name', 'description'], properties: { workflow_name: { type: 'string', description: 'Unique name for this workflow' }, description: { type: 'string', description: 'What this workflow does' } } },

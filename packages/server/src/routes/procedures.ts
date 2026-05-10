@@ -32,6 +32,22 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       reply.send(await workflowStore.search(q))
     })
 
+    app.delete<{ Params: { name: string } }>('/procedure/:name', {
+      schema: {
+        tags: ['Procedures'],
+        summary: 'Delete a procedure',
+        security: authed,
+        params: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+        },
+        response: { 204: { type: 'null' } },
+      } as any,
+    }, async (req, reply) => {
+      await workflowStore.delete(req.params.name)
+      reply.code(204).send()
+    })
+
     app.get<{ Params: { name: string } }>('/procedure/:name', {
       schema: {
         tags: ['Procedures'],
