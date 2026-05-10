@@ -18,7 +18,6 @@ module.exports = {
       name: 'eliph-mcp',
       script: 'dist/mcp-server.js',
       cwd: '/Users/sarvesh/Desktop/eliph',
-      exec_mode: 'fork',
       instances: 1,
       autorestart: true,
       watch: false,
