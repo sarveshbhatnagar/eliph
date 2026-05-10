@@ -6,6 +6,14 @@ export function openDb(path: string): Database.Database {
   db.pragma('journal_mode = WAL')
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS org_keys (
+      id         TEXT PRIMARY KEY,
+      label      TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      key_hash   TEXT NOT NULL,
+      key_limit  INTEGER NOT NULL DEFAULT 100
+    );
+
     CREATE TABLE IF NOT EXISTS workflows (
       name        TEXT PRIMARY KEY,
       description TEXT NOT NULL,
@@ -30,7 +38,8 @@ export function openDb(path: string): Database.Database {
       id         TEXT PRIMARY KEY,
       label      TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      key_hash   TEXT NOT NULL
+      key_hash   TEXT NOT NULL,
+      org_key_id TEXT REFERENCES org_keys(id)
     );
   `)
 
