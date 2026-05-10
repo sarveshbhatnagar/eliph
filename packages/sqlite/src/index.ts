@@ -1,11 +1,13 @@
 export { SqliteWorkflowStore } from './workflow'
 export { SqliteSessionStore } from './session'
 export { SqliteApiKeyStore } from './apikey'
+export { SqliteOrgKeyStore } from './orgkey'
 
 import { openDb } from './db'
 import { SqliteWorkflowStore } from './workflow'
 import { SqliteSessionStore } from './session'
 import { SqliteApiKeyStore } from './apikey'
+import { SqliteOrgKeyStore } from './orgkey'
 
 export function createStores(dbPath: string) {
   const db = openDb(dbPath)
@@ -13,5 +15,6 @@ export function createStores(dbPath: string) {
     workflowStore: new SqliteWorkflowStore(db),
     sessionStore: new SqliteSessionStore(db),
     apiKeyStore: new SqliteApiKeyStore(db),
+    orgKeyStore: new SqliteOrgKeyStore(db),
   }
 }
