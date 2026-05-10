@@ -66,6 +66,19 @@ function addSingleTransition(graph: WorkflowGraph, transitionStr: string): Workf
   return { ...graph, states, transitions: [...graph.transitions, transition] }
 }
 
+export function markStateTerminal(graph: WorkflowGraph, stateName: string): WorkflowGraph {
+  if (!graph.states[stateName]) {
+    throw new Error(`State "${stateName}" does not exist in workflow "${graph.name}"`)
+  }
+  return {
+    ...graph,
+    states: {
+      ...graph.states,
+      [stateName]: { ...graph.states[stateName], isTerminal: true },
+    },
+  }
+}
+
 // Splits "start -.5-> tails -> end" into ["start -.5-> tails", "tails -> end"]
 function splitTransitionChain(chain: string): string[] {
   const results: string[] = []

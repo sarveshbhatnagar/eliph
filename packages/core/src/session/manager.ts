@@ -7,6 +7,13 @@ export function computeNextState(
   session: Session,
   completedAction?: string
 ): string {
+  const currentState = graph.states[session.currentState]
+  if (currentState?.isTerminal) {
+    throw new Error(
+      `Session is already in terminal state "${session.currentState}". The workflow is complete — no further advances are possible.`
+    )
+  }
+
   const outgoing = getNextTransitions(graph, session.currentState)
 
   if (outgoing.length === 0) {
@@ -16,8 +23,12 @@ export function computeNextState(
   if (completedAction !== undefined) {
     const match = outgoing.find(t => t.type === 'symbolic' && t.action === completedAction)
     if (!match) {
+      const validActions = outgoing.filter(t => t.type === 'symbolic').map(t => `"${t.action}"`)
+      const deterministicPaths = outgoing.filter(t => t.type === 'deterministic').map(t => `"${t.from} -> ${t.to}"`)
       throw new Error(
-        `Action "${completedAction}" does not match any valid transition from "${session.currentState}"`
+        `Action "${completedAction}" does not match any transition from "${session.currentState}". ` +
+        (validActions.length > 0 ? `Valid actions: ${validActions.join(', ')}. ` : `No symbolic transitions from this state — `) +
+        (deterministicPaths.length > 0 ? `Deterministic transitions (advance with no completed_action): ${deterministicPaths.join(', ')}.` : '')
       )
     }
     return match.to
@@ -34,8 +45,10 @@ export function computeNextState(
   }
 
   if (outgoing.some(t => t.type === 'symbolic')) {
+    const actions = outgoing.filter(t => t.type === 'symbolic').map(t => `"${t.action}" → "${t.to}"`)
     throw new Error(
-      `State "${session.currentState}" requires a completed_action to advance`
+      `State "${session.currentState}" requires a completed_action to advance. ` +
+      `Valid actions: ${actions.join(', ')}.`
     )
   }
 

@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify'
-import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState, markStateTerminal } from '@eliph/core'
 
 const authed = [{ BearerAuth: [] }]
 
@@ -161,6 +161,31 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         }
         try {
           const updated = removeState(graph, req.params.state)
+          await workflowStore.save(updated)
+          reply.send(updated)
+        } catch (e: any) {
+          reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
+        }
+      }
+    )
+
+    app.post<{ Params: { name: string; state: string } }>(
+      '/procedure/:name/state/:state/terminal', {
+        schema: {
+          tags: ['Procedures'],
+          summary: 'Mark a state as terminal (no further advances allowed)',
+          security: authed,
+          params: {
+            type: 'object',
+            properties: { name: { type: 'string' }, state: { type: 'string' } },
+          },
+          response: { 200: { $ref: 'WorkflowGraph#' } },
+        } as any,
+      }, async (req, reply) => {
+        const graph = await workflowStore.get(req.params.name)
+        if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
+        try {
+          const updated = markStateTerminal(graph, req.params.state)
           await workflowStore.save(updated)
           reply.send(updated)
         } catch (e: any) {

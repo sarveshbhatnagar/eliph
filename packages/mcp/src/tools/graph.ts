@@ -13,5 +13,8 @@ export function makeGraphTools(client: ApiClient) {
 
     list_states: async (args: { workflow_name: string }) =>
       client.request('GET', `/procedure/${encodeURIComponent(args.workflow_name)}/states`),
+
+    mark_terminal: async (args: { workflow_name: string; state_name: string }) =>
+      client.request('POST', `/procedure/${encodeURIComponent(args.workflow_name)}/state/${encodeURIComponent(args.state_name)}/terminal`),
   }
 }

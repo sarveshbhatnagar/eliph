@@ -13,7 +13,16 @@ export function makeSessionTools(client: ApiClient) {
     current_state: async (args: { session_id: string; workflow_name: string }) =>
       client.request('GET', `/session/${args.session_id}/state?workflow=${encodeURIComponent(args.workflow_name)}`),
 
-    next_transitions: async (args: { session_id: string; workflow_name: string }) =>
-      client.request('GET', `/session/${args.session_id}/next?workflow=${encodeURIComponent(args.workflow_name)}`),
+    next_transitions: async (args: { session_id: string; workflow_name: string }) => {
+      const transitions: any[] = await client.request('GET', `/session/${args.session_id}/next?workflow=${encodeURIComponent(args.workflow_name)}`)
+      return transitions.map(t => ({
+        ...t,
+        advance_with: t.type === 'symbolic'
+          ? { completed_action: t.action }
+          : t.type === 'deterministic'
+          ? 'call advance() with no completed_action'
+          : 'call advance() with no completed_action (probabilistic — result is random)',
+      }))
+    },
   }
 }

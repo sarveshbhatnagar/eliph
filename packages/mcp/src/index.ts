@@ -20,8 +20,8 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['workflow_name', 'description'], properties: { workflow_name: { type: 'string', description: 'Unique name for this workflow' }, description: { type: 'string', description: 'What this workflow does' } } },
   },
   add_transition: {
-    description: 'Add a transition between two states in a workflow procedure. Transitions define the valid paths through the workflow. Format: "from_state -> to_state" or "from_state -> to_state [action_required]". Example: "start -> review" or "review -> approved [manager_approval]".',
-    inputSchema: { type: 'object', required: ['workflow_name', 'transition'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string', description: 'Transition in format "from -> to" or "from -> to [action]"' } } },
+    description: 'Add a transition between two states in a workflow procedure. Three formats supported:\n• "A -> B" — deterministic: advance() with no completed_action moves automatically to B\n• "A -action_name-> B" — symbolic: advance() requires completed_action: "action_name"\n• "A -.7-> B" — probabilistic: advance() samples randomly by weight\nChaining: "A -> B -> C" creates multiple transitions at once.\nNOTE: the state named "end" is automatically marked terminal. For other terminal states, use mark_terminal() after creating them.',
+    inputSchema: { type: 'object', required: ['workflow_name', 'transition'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string', description: 'e.g. "start -> review", "review -approved-> done", "start -.7-> pass -> end"' } } },
   },
   remove_transition: {
     description: 'Remove an existing transition from a workflow procedure. Use the same format as add_transition: "from_state -> to_state".',
@@ -34,6 +34,10 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
   list_states: {
     description: 'List all states defined in a workflow procedure, including which states are terminal (end states). Use this to understand the full shape of a workflow.',
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
+  },
+  mark_terminal: {
+    description: 'Mark a state as terminal — sessions in this state cannot advance further and the workflow is considered complete. The state named "end" is auto-marked terminal. Use this for other logical end states (e.g. "approved", "rejected", "good_to_buy"). Call this after creating the state via add_transition.',
+    inputSchema: { type: 'object', required: ['workflow_name', 'state_name'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' } } },
   },
   create_session: {
     description: 'Start a new eliph session — a single live instance of a workflow procedure running through its states. Every session starts at the "start" state. Returns a session_id you must keep to call advance(), next_transitions(), etc. Use this when beginning a new instance of a process (e.g. a new approval request, a new onboarding run).',
@@ -48,7 +52,7 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
   },
   next_transitions: {
-    description: 'List the transitions available from the current state of an eliph session — i.e. what states can be moved to next and what actions are required. Always call this before advance() to understand what options exist.',
+    description: 'List the transitions available from the current state. Each result includes an "advance_with" field telling you exactly what to pass to advance(). For symbolic transitions this is { completed_action: "action_name" }; for deterministic it says to call advance() with no argument.',
     inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
   },
   advance: {
@@ -60,7 +64,7 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' }, target_state: { type: 'string', description: 'State to reset to (default: start)' } } },
   },
   requirements: {
-    description: 'Get the action requirements for the current state of a session.',
+    description: 'Returns the symbolic action names required to leave the current state — i.e. the completed_action values you can pass to advance(). Returns [] if all outgoing transitions are deterministic (no action needed). This is a shorthand for next_transitions filtered to symbolic-only; prefer next_transitions for full context.',
     inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
   },
 }
@@ -70,7 +74,7 @@ export function buildMcpServer(apiUrl: string, apiKey: string) {
 
   const allTools: Record<string, ToolHandler> = {
     ...makeProcedureTools(client),
-    ...makeGraphTools(client),
+    ...makeGraphTools(client),    // includes mark_terminal
     ...makeSessionTools(client),
     ...makeAdvanceTools(client),
   } as unknown as Record<string, ToolHandler>

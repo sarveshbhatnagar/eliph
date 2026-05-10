@@ -1,5 +1,6 @@
 export * from './graph/types'
 export * from './graph/engine'
+export { markStateTerminal } from './graph/engine'
 export * from './session/types'
 export * from './session/manager'
 export * from './store/interfaces'
