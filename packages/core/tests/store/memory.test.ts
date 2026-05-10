@@ -92,7 +92,7 @@ describe('InMemorySessionStore', () => {
 describe('InMemoryApiKeyStore', () => {
   it('creates a key and finds it by raw value', async () => {
     const store = new InMemoryApiKeyStore()
-    const { rawKey } = await store.create('my-key')
+    const { rawKey } = await store.create('my-key', 'test-org-id')
     const found = await store.find(rawKey)
     expect(found).not.toBeNull()
     expect(found?.label).toBe('my-key')
@@ -105,14 +105,14 @@ describe('InMemoryApiKeyStore', () => {
 
   it('deletes a key by id', async () => {
     const store = new InMemoryApiKeyStore()
-    const { rawKey, record } = await store.create('to-delete')
+    const { rawKey, record } = await store.create('to-delete', 'test-org-id')
     await store.delete(record.id)
     expect(await store.find(rawKey)).toBeNull()
   })
 
   it('lists keys without exposing hashes', async () => {
     const store = new InMemoryApiKeyStore()
-    await store.create('label-a')
+    await store.create('label-a', 'test-org-id')
     const list = await store.list()
     expect(list).toHaveLength(1)
     expect((list[0] as any).key).toBeUndefined()
