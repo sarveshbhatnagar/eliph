@@ -66,4 +66,8 @@ export class SqliteOrgKeyStore implements IOrgKeyStore {
       .get(orgKeyId) as { cnt: number }
     return row.cnt
   }
+
+  async updateLimit(id: string, keyLimit: number): Promise<void> {
+    this.db.prepare('UPDATE org_keys SET key_limit = ? WHERE id = ?').run(keyLimit, id)
+  }
 }

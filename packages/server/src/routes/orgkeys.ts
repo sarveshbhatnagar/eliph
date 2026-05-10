@@ -89,5 +89,30 @@ export function orgKeysRoutes(orgKeyStore: IOrgKeyStore) {
       await orgKeyStore.delete(req.params.id)
       reply.code(204).send()
     })
+
+    // PATCH /admin/org-keys/:id — update key limit
+    app.patch<{ Params: { id: string }; Body: { keyLimit: number } }>('/admin/org-keys/:id', {
+      schema: {
+        tags: ['Admin'],
+        summary: 'Update key limit for an org key (admin only)',
+        security: [{ BearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+        },
+        body: {
+          type: 'object',
+          required: ['keyLimit'],
+          properties: { keyLimit: { type: 'integer', minimum: 1 } },
+        },
+        response: { 204: { type: 'null' } },
+      },
+    }, async (req, reply) => {
+      if (req.authContext?.type !== 'admin') {
+        return reply.code(403).send({ error: 'Admin access required', code: 'FORBIDDEN' })
+      }
+      await orgKeyStore.updateLimit(req.params.id, req.body.keyLimit)
+      reply.code(204).send()
+    })
   }
 }

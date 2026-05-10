@@ -19,15 +19,17 @@ usage() {
   echo "Usage: ./org-keys.sh <command> [options]"
   echo ""
   echo "Commands:"
-  echo "  list                        List all org keys with usage counts"
-  echo "  create <label> <keyLimit>   Create a new org key"
-  echo "  revoke <orgKeyId>           Revoke an org key"
-  echo "  keys <orgKeyId>             List API keys created under an org key"
-  echo "  delete-key <apiKeyId>       Delete an API key"
+  echo "  list                             List all org keys with usage counts"
+  echo "  create <label> <keyLimit>        Create a new org key"
+  echo "  update-limit <orgKeyId> <limit>  Update the key limit for an org"
+  echo "  revoke <orgKeyId>                Revoke an org key"
+  echo "  keys <orgKeyId>                  List API keys created under an org key"
+  echo "  delete-key <apiKeyId>            Delete an API key"
   echo ""
   echo "Examples:"
   echo "  ./org-keys.sh list"
   echo "  ./org-keys.sh create amazon 500"
+  echo "  ./org-keys.sh update-limit abc-123 1000"
   echo "  ./org-keys.sh revoke abc-123"
   echo "  ./org-keys.sh keys abc-123"
   echo ""
@@ -91,6 +93,24 @@ print('')
 print(' ', data['rawKey'])
 print('')
 "
+    ;;
+
+  update-limit)
+    if [ -z "$2" ] || [ -z "$3" ]; then
+      echo "Usage: ./org-keys.sh update-limit <orgKeyId> <newLimit>"
+      exit 1
+    fi
+    ID="$2"
+    LIMIT="$3"
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X PATCH "$API/admin/org-keys/$ID" \
+      -H "Authorization: Bearer $ADMIN_SECRET" \
+      -H "Content-Type: application/json" \
+      -d "{\"keyLimit\": $LIMIT}")
+    if [ "$STATUS" = "204" ]; then
+      echo "Key limit updated to $LIMIT."
+    else
+      echo "Failed (HTTP $STATUS). Check the ID with: ./org-keys.sh list"
+    fi
     ;;
 
   revoke)

@@ -40,6 +40,11 @@ export class InMemoryOrgKeyStore implements IOrgKeyStore {
     return this.counts.get(orgKeyId) ?? 0
   }
 
+  async updateLimit(id: string, keyLimit: number): Promise<void> {
+    const entry = this.keys.get(id)
+    if (entry) this.keys.set(id, { ...entry, keyLimit })
+  }
+
   _increment(orgKeyId: string): void {
     this.counts.set(orgKeyId, (this.counts.get(orgKeyId) ?? 0) + 1)
   }
