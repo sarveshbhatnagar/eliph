@@ -2,13 +2,13 @@ export type ApiClient = ReturnType<typeof createClient>
 
 export function createClient(apiUrl: string, apiKey: string) {
   async function request<T = unknown>(method: string, path: string, body?: object): Promise<T> {
+    const headers: Record<string, string> = { Authorization: `Bearer ${apiKey}` }
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+
     const res = await fetch(`${apiUrl}${path}`, {
       method,
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: body ? JSON.stringify(body) : undefined,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
     })
     if (res.status === 204) return null as T
     const data = await res.json()
