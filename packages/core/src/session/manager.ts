@@ -17,7 +17,10 @@ export function computeNextState(
   const outgoing = getNextTransitions(graph, session.currentState)
 
   if (outgoing.length === 0) {
-    throw new Error(`No outgoing transitions from state "${session.currentState}"`)
+    throw new Error(
+      `State "${session.currentState}" has no outgoing transitions — it is effectively terminal. ` +
+      `If this is an end state, call mark_terminal("${graph.name}", "${session.currentState}") to mark it correctly.`
+    )
   }
 
   if (completedAction !== undefined) {

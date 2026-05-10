@@ -20,7 +20,7 @@ describe('computeNextState', () => {
 
   it('throws when no outgoing transitions exist', () => {
     const graph = makeGraph()
-    expect(() => computeNextState(graph, makeSession())).toThrow('No outgoing transitions')
+    expect(() => computeNextState(graph, makeSession())).toThrow('has no outgoing transitions')
   })
 
   it('advances a symbolic transition with matching completed_action', () => {

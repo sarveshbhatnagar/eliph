@@ -216,7 +216,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           workflowStore.get(req.query.workflow),
         ])
         if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
-        reply.send(requirements(graph, session.currentState))
+        reply.send(requirements(graph, session.currentState).map(r => r.action))
       }
     )
   }
