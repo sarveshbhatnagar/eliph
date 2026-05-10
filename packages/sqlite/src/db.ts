@@ -15,11 +15,13 @@ export function openDb(path: string): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS workflows (
-      name        TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      api_key_id  TEXT NOT NULL,
       description TEXT NOT NULL,
       created_at  TEXT NOT NULL,
       updated_at  TEXT NOT NULL,
-      data        TEXT NOT NULL
+      data        TEXT NOT NULL,
+      PRIMARY KEY (name, api_key_id)
     );
 
     CREATE TABLE IF NOT EXISTS sessions (

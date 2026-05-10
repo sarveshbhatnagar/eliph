@@ -13,10 +13,13 @@ function makeGraph(name = 'test'): WorkflowGraph {
   }
 }
 
+const OWN = 'owner-1'
+
 function makeSession(id = 'sess-1'): Session {
   return {
     id,
     workflowName: 'test',
+    workflowOwnerId: OWN,
     currentState: 'start',
     history: ['start'],
     createdAt: new Date(),
@@ -26,37 +29,37 @@ function makeSession(id = 'sess-1'): Session {
 describe('InMemoryWorkflowStore', () => {
   it('saves and retrieves a workflow', async () => {
     const store = new InMemoryWorkflowStore()
-    await store.save(makeGraph())
-    const result = await store.get('test')
+    await store.save(makeGraph(), OWN)
+    const result = await store.get('test', OWN)
     expect(result?.name).toBe('test')
   })
 
   it('returns null for unknown workflow', async () => {
     const store = new InMemoryWorkflowStore()
-    expect(await store.get('nonexistent')).toBeNull()
+    expect(await store.get('nonexistent', OWN)).toBeNull()
   })
 
   it('lists all workflow names', async () => {
     const store = new InMemoryWorkflowStore()
-    await store.save(makeGraph('a'))
-    await store.save(makeGraph('b'))
-    expect(await store.list()).toEqual(expect.arrayContaining(['a', 'b']))
+    await store.save(makeGraph('a'), OWN)
+    await store.save(makeGraph('b'), OWN)
+    expect(await store.list(OWN)).toEqual(expect.arrayContaining(['a', 'b']))
   })
 
   it('searches by name substring', async () => {
     const store = new InMemoryWorkflowStore()
-    await store.save(makeGraph('onboarding'))
-    await store.save(makeGraph('checkout'))
-    const results = await store.search('board')
+    await store.save(makeGraph('onboarding'), OWN)
+    await store.save(makeGraph('checkout'), OWN)
+    const results = await store.search('board', OWN)
     expect(results.map((r: any) => r.name)).toContain('onboarding')
-    expect(results).not.toContain('checkout')
+    expect(results.map((r: any) => r.name)).not.toContain('checkout')
   })
 
   it('deletes a workflow', async () => {
     const store = new InMemoryWorkflowStore()
-    await store.save(makeGraph())
-    await store.delete('test')
-    expect(await store.get('test')).toBeNull()
+    await store.save(makeGraph(), OWN)
+    await store.delete('test', OWN)
+    expect(await store.get('test', OWN)).toBeNull()
   })
 })
 

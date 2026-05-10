@@ -5,6 +5,7 @@ function makeSession(overrides: Partial<Session> = {}): Session {
   return {
     id: 'sess-1',
     workflowName: 'flow',
+    workflowOwnerId: 'owner-1',
     currentState: 'start',
     history: ['start'],
     createdAt: new Date('2026-01-01T00:00:00.000Z'),

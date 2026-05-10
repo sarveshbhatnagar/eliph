@@ -1,8 +1,15 @@
-import { FastifyInstance } from 'fastify'
+import { FastifyInstance, FastifyRequest } from 'fastify'
 import { IWorkflowStore, ISessionStore, Session, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements } from '@eliph/core'
 import { randomUUID } from 'crypto'
+import { ADMIN_OWNER_ID } from '../middleware/auth'
 
 const authed = [{ BearerAuth: [] }]
+
+function ownerId(req: FastifyRequest): string {
+  const ctx = req.authContext
+  if (ctx?.type === 'api') return ctx.apiKeyId
+  return ADMIN_OWNER_ID
+}
 
 export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
   return async (app: FastifyInstance) => {
@@ -21,11 +28,13 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         },
       } as any,
     }, async (req, reply) => {
-      const graph = await workflowStore.get(req.body.workflow)
+      const owner = ownerId(req)
+      const graph = await workflowStore.get(req.body.workflow, owner)
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       const session: Session = {
         id: randomUUID(),
         workflowName: req.body.workflow,
+        workflowOwnerId: owner,
         currentState: 'start',
         history: ['start'],
         createdAt: new Date(),
@@ -76,11 +85,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
         } as any,
       }, async (req, reply) => {
-        const [session, graph] = await Promise.all([
-          sessionStore.get(req.params.id),
-          workflowStore.get(req.query.workflow),
-        ])
-        if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const session = await sessionStore.get(req.params.id)
+        if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const graph = await workflowStore.get(req.query.workflow, session.workflowOwnerId)
+        if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         reply.send({ currentState: session.currentState, nextTransitions: getNextTransitions(graph, session.currentState) })
       }
     )
@@ -105,11 +113,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
         } as any,
       }, async (req, reply) => {
-        const [session, graph] = await Promise.all([
-          sessionStore.get(req.params.id),
-          workflowStore.get(req.query.workflow),
-        ])
-        if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const session = await sessionStore.get(req.params.id)
+        if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const graph = await workflowStore.get(req.query.workflow, session.workflowOwnerId)
+        if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         reply.send(getNextTransitions(graph, session.currentState))
       }
     )
@@ -137,11 +144,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
         } as any,
       }, async (req, reply) => {
-        const [session, graph] = await Promise.all([
-          sessionStore.get(req.params.id),
-          workflowStore.get(req.body.workflow),
-        ])
-        if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const session = await sessionStore.get(req.params.id)
+        if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const graph = await workflowStore.get(req.body.workflow, session.workflowOwnerId)
+        if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         try {
           const newState = computeNextState(graph, session, req.body.completed_action)
           const updated = applyAdvance(session, newState)
@@ -176,11 +182,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
         } as any,
       }, async (req, reply) => {
-        const [session, graph] = await Promise.all([
-          sessionStore.get(req.params.id),
-          workflowStore.get(req.body.workflow),
-        ])
-        if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const session = await sessionStore.get(req.params.id)
+        if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const graph = await workflowStore.get(req.body.workflow, session.workflowOwnerId)
+        if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         const target = req.body.target_state ?? 'start'
         if (!graph.states[target]) {
           return reply.code(400).send({ error: `State "${target}" does not exist`, code: 'BAD_REQUEST' })
@@ -211,11 +216,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
         } as any,
       }, async (req, reply) => {
-        const [session, graph] = await Promise.all([
-          sessionStore.get(req.params.id),
-          workflowStore.get(req.query.workflow),
-        ])
-        if (!session || !graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const session = await sessionStore.get(req.params.id)
+        if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
+        const graph = await workflowStore.get(req.query.workflow, session.workflowOwnerId)
+        if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         reply.send(requirements(graph, session.currentState).map(r => r.action))
       }
     )

@@ -1,7 +1,14 @@
-import { FastifyInstance } from 'fastify'
+import { FastifyInstance, FastifyRequest } from 'fastify'
 import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState, markStateTerminal } from '@eliph/core'
+import { ADMIN_OWNER_ID } from '../middleware/auth'
 
 const authed = [{ BearerAuth: [] }]
+
+function ownerId(req: FastifyRequest): string {
+  const ctx = req.authContext
+  if (ctx?.type === 'api') return ctx.apiKeyId
+  return ADMIN_OWNER_ID
+}
 
 export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
   return async (app: FastifyInstance) => {
@@ -29,7 +36,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       } as any,
     }, async (req, reply) => {
       const q = req.query.q ?? ''
-      reply.send(await workflowStore.search(q))
+      reply.send(await workflowStore.search(q, ownerId(req)))
     })
 
     app.delete<{ Params: { name: string } }>('/procedure/:name', {
@@ -44,7 +51,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         response: { 204: { type: 'null' } },
       } as any,
     }, async (req, reply) => {
-      await workflowStore.delete(req.params.name)
+      await workflowStore.delete(req.params.name, ownerId(req))
       reply.code(204).send()
     })
 
@@ -62,7 +69,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         },
       } as any,
     }, async (req, reply) => {
-      const graph = await workflowStore.get(req.params.name)
+      const graph = await workflowStore.get(req.params.name, ownerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       reply.send(graph)
     })
@@ -92,7 +99,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         states: { start: { name: 'start', isTerminal: false } },
         transitions: [],
       }
-      await workflowStore.save(graph)
+      await workflowStore.save(graph, ownerId(req))
       reply.code(201).send(graph)
     })
 
@@ -116,11 +123,12 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const graph = await workflowStore.get(req.params.name)
+        const owner = ownerId(req)
+        const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
           const updated = addTransition(graph, req.body.transition)
-          await workflowStore.save(updated)
+          await workflowStore.save(updated, owner)
           reply.send(updated)
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
@@ -148,11 +156,12 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const graph = await workflowStore.get(req.params.name)
+        const owner = ownerId(req)
+        const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
           const updated = removeTransition(graph, req.body.transition)
-          await workflowStore.save(updated)
+          await workflowStore.save(updated, owner)
           reply.send(updated)
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
@@ -178,7 +187,8 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const graph = await workflowStore.get(req.params.name)
+        const owner = ownerId(req)
+        const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         const active = await sessionStore.findByState(req.params.name, req.params.state)
         if (active.length > 0) {
@@ -186,7 +196,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         }
         try {
           const updated = removeState(graph, req.params.state)
-          await workflowStore.save(updated)
+          await workflowStore.save(updated, owner)
           reply.send(updated)
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
@@ -207,11 +217,12 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           response: { 200: { $ref: 'WorkflowGraph#' } },
         } as any,
       }, async (req, reply) => {
-        const graph = await workflowStore.get(req.params.name)
+        const owner = ownerId(req)
+        const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
           const updated = markStateTerminal(graph, req.params.state)
-          await workflowStore.save(updated)
+          await workflowStore.save(updated, owner)
           reply.send(updated)
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
@@ -233,7 +244,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         },
       } as any,
     }, async (req, reply) => {
-      const graph = await workflowStore.get(req.params.name)
+      const graph = await workflowStore.get(req.params.name, ownerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       reply.send(Object.values(graph.states))
     })

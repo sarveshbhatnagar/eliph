@@ -4,26 +4,32 @@ import { WorkflowGraph } from '../../graph/types'
 export class InMemoryWorkflowStore implements IWorkflowStore {
   private store = new Map<string, WorkflowGraph>()
 
-  async get(name: string): Promise<WorkflowGraph | null> {
-    return this.store.get(name) ?? null
+  private key(name: string, ownerId: string) { return `${ownerId}:${name}` }
+
+  async get(name: string, ownerId: string): Promise<WorkflowGraph | null> {
+    return this.store.get(this.key(name, ownerId)) ?? null
   }
 
-  async list(): Promise<string[]> {
-    return Array.from(this.store.keys())
+  async list(ownerId: string): Promise<string[]> {
+    return Array.from(this.store.entries())
+      .filter(([k]) => k.startsWith(`${ownerId}:`))
+      .map(([, g]) => g.name)
   }
 
-  async search(query: string): Promise<WorkflowSummary[]> {
+  async search(query: string, ownerId: string): Promise<WorkflowSummary[]> {
     const q = query.toLowerCase()
-    return Array.from(this.store.values())
+    return Array.from(this.store.entries())
+      .filter(([k]) => k.startsWith(`${ownerId}:`))
+      .map(([, g]) => g)
       .filter(g => g.name.toLowerCase().includes(q) || g.description.toLowerCase().includes(q))
       .map(g => ({ name: g.name, description: g.description }))
   }
 
-  async save(graph: WorkflowGraph): Promise<void> {
-    this.store.set(graph.name, graph)
+  async save(graph: WorkflowGraph, ownerId: string): Promise<void> {
+    this.store.set(this.key(graph.name, ownerId), graph)
   }
 
-  async delete(name: string): Promise<void> {
-    this.store.delete(name)
+  async delete(name: string, ownerId: string): Promise<void> {
+    this.store.delete(this.key(name, ownerId))
   }
 }

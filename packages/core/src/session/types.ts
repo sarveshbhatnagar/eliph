@@ -1,6 +1,7 @@
 export interface Session {
   id: string
   workflowName: string
+  workflowOwnerId: string
   currentState: string
   history: string[]
   createdAt: Date

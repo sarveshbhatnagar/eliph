@@ -1,10 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { IOrgKeyStore, IApiKeyStore } from '@eliph/core'
 
+export const ADMIN_OWNER_ID = '__admin__'
+
 export type AuthContext =
   | { type: 'admin' }
   | { type: 'org'; orgKeyId: string; keyLimit: number }
-  | { type: 'api' }
+  | { type: 'api'; apiKeyId: string }
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -39,7 +41,7 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
     // API key
     const apiKey = await apiKeyStore.find(token)
     if (apiKey) {
-      request.authContext = { type: 'api' }
+      request.authContext = { type: 'api', apiKeyId: apiKey.id }
       return
     }
 

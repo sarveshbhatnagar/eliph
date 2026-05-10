@@ -11,10 +11,10 @@ async function makeAuthedApp() {
     apiKeyStore,
     orgKeyStore,
   }
-  const { rawKey } = await stores.apiKeyStore.create('test', org.id)
+  const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
   const app = buildApp(stores)
   await app.ready()
-  return { app, stores, rawKey }
+  return { app, stores, rawKey, apiKeyId: record.id }
 }
 
 function authed(rawKey: string) {
@@ -38,10 +38,10 @@ describe('POST /procedure', () => {
 
 describe('GET /procedure/:name', () => {
   it('returns a workflow', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     await stores.workflowStore.save({
       name: 'flow', description: 'test', states: { start: { name: 'start', isTerminal: false } }, transitions: [],
-    })
+    }, apiKeyId)
     const res = await app.inject({ method: 'GET', url: '/procedure/flow', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
     expect(res.json().name).toBe('flow')
@@ -56,8 +56,8 @@ describe('GET /procedure/:name', () => {
 
 describe('GET /procedures', () => {
   it('returns matching workflow names', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.workflowStore.save({ name: 'onboarding', description: 'user onboarding', states: { start: { name: 'start', isTerminal: false } }, transitions: [] })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.workflowStore.save({ name: 'onboarding', description: 'user onboarding', states: { start: { name: 'start', isTerminal: false } }, transitions: [] }, apiKeyId)
     const res = await app.inject({ method: 'GET', url: '/procedures?q=onboard', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
     expect(res.json().map((r: any) => r.name)).toContain('onboarding')
@@ -66,8 +66,8 @@ describe('GET /procedures', () => {
 
 describe('POST /procedure/:name/transition', () => {
   it('adds a transition to a workflow', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] }, apiKeyId)
     const res = await app.inject({
       method: 'POST', url: '/procedure/flow/transition',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -78,8 +78,8 @@ describe('POST /procedure/:name/transition', () => {
   })
 
   it('returns 400 for invalid transition string', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] }, apiKeyId)
     const res = await app.inject({
       method: 'POST', url: '/procedure/flow/transition',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -91,11 +91,11 @@ describe('POST /procedure/:name/transition', () => {
 
 describe('DELETE /procedure/:name/transition', () => {
   it('removes a transition', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     const { addTransition } = await import('@eliph/core')
     let graph = { name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] as any[] }
     graph = addTransition(graph as any, 'start -> review') as any
-    await stores.workflowStore.save(graph as any)
+    await stores.workflowStore.save(graph as any, apiKeyId)
     const res = await app.inject({
       method: 'DELETE', url: '/procedure/flow/transition',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -108,11 +108,11 @@ describe('DELETE /procedure/:name/transition', () => {
 
 describe('DELETE /procedure/:name/state/:state', () => {
   it('removes a state', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     const { addTransition } = await import('@eliph/core')
     let graph = { name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] as any[] }
     graph = addTransition(graph as any, 'start -> review') as any
-    await stores.workflowStore.save(graph as any)
+    await stores.workflowStore.save(graph as any, apiKeyId)
     const res = await app.inject({
       method: 'DELETE', url: '/procedure/flow/state/review',
       headers: authed(rawKey),
@@ -122,12 +122,12 @@ describe('DELETE /procedure/:name/state/:state', () => {
   })
 
   it('returns 409 when active sessions are in the state', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     const { addTransition } = await import('@eliph/core')
     let graph = { name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] as any[] }
     graph = addTransition(graph as any, 'start -> review') as any
-    await stores.workflowStore.save(graph as any)
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'review', history: ['start', 'review'], createdAt: new Date() })
+    await stores.workflowStore.save(graph as any, apiKeyId)
+    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'review', history: ['start', 'review'], createdAt: new Date() })
     const res = await app.inject({ method: 'DELETE', url: '/procedure/flow/state/review', headers: authed(rawKey) })
     expect(res.statusCode).toBe(409)
   })
@@ -141,8 +141,8 @@ describe('DELETE /procedure/:name/state/:state', () => {
 
 describe('GET /procedure/:name/states', () => {
   it('returns all states in a workflow', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false }, review: { name: 'review', isTerminal: false } }, transitions: [] })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.workflowStore.save({ name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false }, review: { name: 'review', isTerminal: false } }, transitions: [] }, apiKeyId)
     const res = await app.inject({ method: 'GET', url: '/procedure/flow/states', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
     const body = res.json()

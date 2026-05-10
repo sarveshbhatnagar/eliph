@@ -4,45 +4,45 @@ import { IWorkflowStore, WorkflowGraph, WorkflowSummary } from '@eliph/core'
 export class SqliteWorkflowStore implements IWorkflowStore {
   constructor(private db: Database.Database) {}
 
-  async get(name: string): Promise<WorkflowGraph | null> {
+  async get(name: string, ownerId: string): Promise<WorkflowGraph | null> {
     const row = this.db
-      .prepare('SELECT data FROM workflows WHERE name = ?')
-      .get(name) as { data: string } | undefined
+      .prepare('SELECT data FROM workflows WHERE name = ? AND api_key_id = ?')
+      .get(name, ownerId) as { data: string } | undefined
     return row ? (JSON.parse(row.data) as WorkflowGraph) : null
   }
 
-  async list(): Promise<string[]> {
+  async list(ownerId: string): Promise<string[]> {
     const rows = this.db
-      .prepare('SELECT name FROM workflows')
-      .all() as { name: string }[]
+      .prepare('SELECT name FROM workflows WHERE api_key_id = ?')
+      .all(ownerId) as { name: string }[]
     return rows.map(r => r.name)
   }
 
-  async search(query: string): Promise<WorkflowSummary[]> {
+  async search(query: string, ownerId: string): Promise<WorkflowSummary[]> {
     const q = query.toLowerCase()
     const rows = this.db
-      .prepare('SELECT name, description FROM workflows')
-      .all() as { name: string; description: string }[]
+      .prepare('SELECT name, description FROM workflows WHERE api_key_id = ?')
+      .all(ownerId) as { name: string; description: string }[]
     return rows
       .filter(r => r.name.toLowerCase().includes(q) || r.description.toLowerCase().includes(q))
       .map(r => ({ name: r.name, description: r.description }))
   }
 
-  async save(graph: WorkflowGraph): Promise<void> {
+  async save(graph: WorkflowGraph, ownerId: string): Promise<void> {
     const now = new Date().toISOString()
     this.db
       .prepare(`
-        INSERT INTO workflows (name, description, created_at, updated_at, data)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(name) DO UPDATE SET
+        INSERT INTO workflows (name, api_key_id, description, created_at, updated_at, data)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(name, api_key_id) DO UPDATE SET
           description = excluded.description,
           updated_at  = excluded.updated_at,
           data        = excluded.data
       `)
-      .run(graph.name, graph.description, now, now, JSON.stringify(graph))
+      .run(graph.name, ownerId, graph.description, now, now, JSON.stringify(graph))
   }
 
-  async delete(name: string): Promise<void> {
-    this.db.prepare('DELETE FROM workflows WHERE name = ?').run(name)
+  async delete(name: string, ownerId: string): Promise<void> {
+    this.db.prepare('DELETE FROM workflows WHERE name = ? AND api_key_id = ?').run(name, ownerId)
   }
 }

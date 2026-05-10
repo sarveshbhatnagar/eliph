@@ -8,7 +8,7 @@ function makeGraph(): WorkflowGraph {
 }
 
 function makeSession(currentState = 'start'): Session {
-  return { id: 'sess-1', workflowName: 'test', currentState, history: [currentState], createdAt: new Date() }
+  return { id: 'sess-1', workflowName: 'test', workflowOwnerId: 'test-owner', currentState, history: [currentState], createdAt: new Date() }
 }
 
 describe('computeNextState', () => {

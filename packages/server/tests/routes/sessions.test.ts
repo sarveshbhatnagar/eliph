@@ -25,15 +25,20 @@ async function makeAuthedApp() {
     apiKeyStore,
     orgKeyStore,
   }
-  await stores.workflowStore.save(baseGraph)
-  const { rawKey } = await stores.apiKeyStore.create('test', org.id)
+  const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
+  const apiKeyId = record.id
+  await stores.workflowStore.save(baseGraph, apiKeyId)
   const app = buildApp(stores)
   await app.ready()
-  return { app, stores, rawKey }
+  return { app, stores, rawKey, apiKeyId }
 }
 
 function authed(rawKey: string) {
   return { authorization: `Bearer ${rawKey}` }
+}
+
+function makeSession(overrides: any) {
+  return { workflowOwnerId: 'test-owner', ...overrides, createdAt: new Date() }
 }
 
 describe('POST /session', () => {
@@ -63,8 +68,8 @@ describe('POST /session', () => {
 
 describe('DELETE /session/:id', () => {
   it('deletes a session', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'start', history: ['start'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({ method: 'DELETE', url: '/session/s1', headers: authed(rawKey) })
     expect(res.statusCode).toBe(204)
   })
@@ -72,8 +77,8 @@ describe('DELETE /session/:id', () => {
 
 describe('GET /session/:id/state', () => {
   it('returns current state and next transitions', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'start', history: ['start'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({ method: 'GET', url: '/session/s1/state?workflow=flow', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -84,8 +89,8 @@ describe('GET /session/:id/state', () => {
 
 describe('GET /session/:id/next', () => {
   it('returns next valid transitions', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'start', history: ['start'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({ method: 'GET', url: '/session/s1/next?workflow=flow', headers: authed(rawKey) })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -96,8 +101,8 @@ describe('GET /session/:id/next', () => {
 
 describe('POST /session/:id/advance', () => {
   it('advances a deterministic session', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'start', history: ['start'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({
       method: 'POST', url: '/session/s1/advance',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -108,13 +113,13 @@ describe('POST /session/:id/advance', () => {
   })
 
   it('advances a symbolic session with completed_action', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     const symbolicGraph: WorkflowGraph = {
       name: 'sym', description: '', states: { start: { name: 'start', isTerminal: false }, done: { name: 'done', isTerminal: false } },
       transitions: [{ from: 'start', to: 'done', type: 'symbolic', action: 'check_done' }],
     }
-    await stores.workflowStore.save(symbolicGraph)
-    await stores.sessionStore.save({ id: 's2', workflowName: 'sym', currentState: 'start', history: ['start'], createdAt: new Date() })
+    await stores.workflowStore.save(symbolicGraph, apiKeyId)
+    await stores.sessionStore.save(makeSession({ id: 's2', workflowName: 'sym', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({
       method: 'POST', url: '/session/s2/advance',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -125,13 +130,13 @@ describe('POST /session/:id/advance', () => {
   })
 
   it('returns 400 when symbolic transition requires completed_action', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
     const symbolicGraph: WorkflowGraph = {
       name: 'sym2', description: '', states: { start: { name: 'start', isTerminal: false }, done: { name: 'done', isTerminal: false } },
       transitions: [{ from: 'start', to: 'done', type: 'symbolic', action: 'check_done' }],
     }
-    await stores.workflowStore.save(symbolicGraph)
-    await stores.sessionStore.save({ id: 's3', workflowName: 'sym2', currentState: 'start', history: ['start'], createdAt: new Date() })
+    await stores.workflowStore.save(symbolicGraph, apiKeyId)
+    await stores.sessionStore.save(makeSession({ id: 's3', workflowName: 'sym2', workflowOwnerId: apiKeyId, currentState: 'start', history: ['start'] }))
     const res = await app.inject({
       method: 'POST', url: '/session/s3/advance',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -143,8 +148,8 @@ describe('POST /session/:id/advance', () => {
 
 describe('POST /session/:id/reset', () => {
   it('resets session to start', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'review', history: ['start', 'review'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'review', history: ['start', 'review'] }))
     const res = await app.inject({
       method: 'POST', url: '/session/s1/reset',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
@@ -155,8 +160,8 @@ describe('POST /session/:id/reset', () => {
   })
 
   it('resets session to a target state', async () => {
-    const { app, stores, rawKey } = await makeAuthedApp()
-    await stores.sessionStore.save({ id: 's1', workflowName: 'flow', currentState: 'end', history: ['start', 'review', 'end'], createdAt: new Date() })
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.sessionStore.save(makeSession({ id: 's1', workflowName: 'flow', workflowOwnerId: apiKeyId, currentState: 'end', history: ['start', 'review', 'end'] }))
     const res = await app.inject({
       method: 'POST', url: '/session/s1/reset',
       headers: { ...authed(rawKey), 'content-type': 'application/json' },
