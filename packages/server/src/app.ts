@@ -86,6 +86,10 @@ export function buildApp(stores: Stores): FastifyInstance {
 
   registerSharedSchemas(app)
 
+  app.get('/health', { config: { skipAuth: true } }, async (_req, reply) => {
+    reply.send({ status: 'ok', ts: new Date().toISOString() })
+  })
+
   app.addHook('preHandler', authMiddleware(stores.apiKeyStore))
 
   app.register(keysRoutes(stores.apiKeyStore))

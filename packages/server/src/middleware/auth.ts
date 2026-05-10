@@ -3,6 +3,7 @@ import { IApiKeyStore } from '@eliph/core'
 
 export function authMiddleware(apiKeyStore: IApiKeyStore) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (request.url === '/health') return
     // POST /keys is exempt — needed to create the first key (bootstrap)
     if (request.method === 'POST' && request.url === '/keys') return
 
