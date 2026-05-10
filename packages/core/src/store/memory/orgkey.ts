@@ -45,6 +45,14 @@ export class InMemoryOrgKeyStore implements IOrgKeyStore {
     if (entry) this.keys.set(id, { ...entry, keyLimit })
   }
 
+  async regenerate(id: string): Promise<{ rawKey: string }> {
+    const entry = this.keys.get(id)
+    if (!entry) throw new Error('Org key not found')
+    const rawKey = randomUUID()
+    this.keys.set(id, { ...entry, rawKey })
+    return { rawKey }
+  }
+
   _increment(orgKeyId: string): void {
     this.counts.set(orgKeyId, (this.counts.get(orgKeyId) ?? 0) + 1)
   }

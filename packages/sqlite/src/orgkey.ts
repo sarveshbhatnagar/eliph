@@ -70,4 +70,11 @@ export class SqliteOrgKeyStore implements IOrgKeyStore {
   async updateLimit(id: string, keyLimit: number): Promise<void> {
     this.db.prepare('UPDATE org_keys SET key_limit = ? WHERE id = ?').run(keyLimit, id)
   }
+
+  async regenerate(id: string): Promise<{ rawKey: string }> {
+    const rawKey = randomUUID()
+    const keyHash = await bcrypt.hash(rawKey, 10)
+    this.db.prepare('UPDATE org_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    return { rawKey }
+  }
 }

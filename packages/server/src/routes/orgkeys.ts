@@ -90,6 +90,31 @@ export function orgKeysRoutes(orgKeyStore: IOrgKeyStore) {
       reply.code(204).send()
     })
 
+    // POST /admin/org-keys/:id/regenerate — issue a new raw key
+    app.post<{ Params: { id: string } }>('/admin/org-keys/:id/regenerate', {
+      schema: {
+        tags: ['Admin'],
+        summary: 'Regenerate the raw key for an org (admin only)',
+        security: [{ BearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string' } },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: { rawKey: { type: 'string' } },
+          },
+        },
+      },
+    }, async (req, reply) => {
+      if (req.authContext?.type !== 'admin') {
+        return reply.code(403).send({ error: 'Admin access required', code: 'FORBIDDEN' })
+      }
+      const { rawKey } = await orgKeyStore.regenerate(req.params.id)
+      reply.send({ rawKey })
+    })
+
     // PATCH /admin/org-keys/:id — update key limit
     app.patch<{ Params: { id: string }; Body: { keyLimit: number } }>('/admin/org-keys/:id', {
       schema: {

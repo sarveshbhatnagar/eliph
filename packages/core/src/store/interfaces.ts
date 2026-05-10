@@ -23,6 +23,7 @@ export interface IOrgKeyStore {
   delete(id: string): Promise<void>
   countKeys(orgKeyId: string): Promise<number>
   updateLimit(id: string, keyLimit: number): Promise<void>
+  regenerate(id: string): Promise<{ rawKey: string }>
 }
 
 export interface IApiKeyStore {
