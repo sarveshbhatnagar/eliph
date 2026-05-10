@@ -3,3 +3,4 @@ dist/
 docs-site/
 *.db
 .worktrees/
+ecosystem.config.js

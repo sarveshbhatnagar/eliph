@@ -123,6 +123,24 @@ Migrations are currently manual (no migration framework). Rules:
 | Date | Change |
 |---|---|
 | 2026-02-19 | Initial schema: `workflows`, `sessions`, `api_keys` |
+| 2026-05-10 | Added `org_keys` table; added `org_key_id` column to `api_keys` |
+
+### Applying the 2026-05-10 migration to an existing database
+
+If `eliph.db` was created before 2026-05-10, run this once before restarting the server:
+
+```bash
+sqlite3 eliph.db "
+CREATE TABLE IF NOT EXISTS org_keys (
+  id         TEXT PRIMARY KEY,
+  label      TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  key_hash   TEXT NOT NULL,
+  key_limit  INTEGER NOT NULL DEFAULT 100
+);
+ALTER TABLE api_keys ADD COLUMN org_key_id TEXT REFERENCES org_keys(id);
+"
+```
 
 ---
 
