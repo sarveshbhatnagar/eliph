@@ -19,6 +19,7 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.url === '/health') return
     if (request.url === '/oauth/token' && request.method === 'POST') return
+    if (request.url?.startsWith('/authorize')) return
     if (request.url === '/.well-known/oauth-authorization-server') return
 
     const auth = request.headers.authorization
