@@ -5,6 +5,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { buildMcpServer, toolMeta } from './index'
 
 const API_URL = process.env.ELIPH_API_URL ?? 'http://localhost:4000'
+const PUBLIC_API_URL = process.env.PUBLIC_API_URL ?? 'https://eliph-api.revalent.ai'
 const PORT = parseInt(process.env.MCP_PORT ?? '4002')
 
 function readBody(req: IncomingMessage): Promise<unknown> {
@@ -31,6 +32,18 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 
   const url = new URL(req.url ?? '/', `http://localhost`)
+
+  if (url.pathname === '/.well-known/oauth-authorization-server') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({
+      issuer: PUBLIC_API_URL,
+      token_endpoint: `${PUBLIC_API_URL}/oauth/token`,
+      grant_types_supported: ['client_credentials'],
+      token_endpoint_auth_methods_supported: ['client_secret_post'],
+      response_types_supported: ['token'],
+    }))
+    return
+  }
 
   if (url.pathname !== '/mcp') {
     res.writeHead(404, { 'Content-Type': 'application/json' })

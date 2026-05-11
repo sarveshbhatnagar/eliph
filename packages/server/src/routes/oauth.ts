@@ -4,8 +4,24 @@ import jwt from 'jsonwebtoken'
 
 const TOKEN_TTL = 60 * 60 * 24 * 30 // 30 days
 
+const ISSUER = process.env.API_URL ?? 'https://eliph-api.revalent.ai'
+
 export function oauthRoutes(apiKeyStore: IApiKeyStore) {
   return async (app: FastifyInstance) => {
+
+    app.get('/.well-known/oauth-authorization-server', {
+      config: { skipAuth: true },
+      schema: { tags: ['OAuth'], summary: 'OAuth 2.0 authorization server metadata (RFC 8414)' } as any,
+    }, async (_req, reply) => {
+      reply.send({
+        issuer: ISSUER,
+        token_endpoint: `${ISSUER}/oauth/token`,
+        grant_types_supported: ['client_credentials'],
+        token_endpoint_auth_methods_supported: ['client_secret_post'],
+        response_types_supported: ['token'],
+      })
+    })
+
     app.post('/oauth/token', {
       config: { skipAuth: true },
       schema: {
