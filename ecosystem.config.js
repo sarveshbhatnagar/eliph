@@ -12,6 +12,7 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         ADMIN_SECRET: '2300ef5042c5d91d8ebde8366ef6f457452dfbd3daee99d8d41b7c473a708e1f',
+        JWT_SECRET: 'c36e0c076aa98b5aa281248a1b76c0d9a3410d8ee93f592fe569103a2ca5687b',
       },
     },
     {

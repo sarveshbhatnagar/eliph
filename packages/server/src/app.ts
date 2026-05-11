@@ -4,6 +4,7 @@ import { IWorkflowStore, ISessionStore, IApiKeyStore, IOrgKeyStore } from '@elip
 import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
 import { orgKeysRoutes } from './routes/orgkeys'
+import { oauthRoutes } from './routes/oauth'
 import { proceduresRoutes } from './routes/procedures'
 import { sessionsRoutes } from './routes/sessions'
 
@@ -87,6 +88,12 @@ export function buildApp(stores: Stores): FastifyInstance {
 
   app.decorateRequest('authContext', null)
   app.register(cors, { origin: true })
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_req, body, done) => {
+    const params = new URLSearchParams(body as string)
+    const obj: Record<string, string> = {}
+    params.forEach((v, k) => { obj[k] = v })
+    done(null, obj)
+  })
 
   registerSharedSchemas(app)
 
@@ -96,6 +103,7 @@ export function buildApp(stores: Stores): FastifyInstance {
 
   app.addHook('preHandler', authMiddleware(stores.orgKeyStore, stores.apiKeyStore))
 
+  app.register(oauthRoutes(stores.apiKeyStore))
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
   app.register(orgKeysRoutes(stores.orgKeyStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
