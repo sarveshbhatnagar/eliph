@@ -33,15 +33,20 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
 
   const url = new URL(req.url ?? '/', `http://localhost`)
 
-  if (url.pathname === '/.well-known/oauth-authorization-server') {
+  const discovery = {
+    issuer: PUBLIC_API_URL,
+    authorization_endpoint: `${PUBLIC_API_URL}/authorize`,
+    token_endpoint: `${PUBLIC_API_URL}/oauth/token`,
+    grant_types_supported: ['authorization_code', 'client_credentials'],
+    response_types_supported: ['code'],
+    code_challenge_methods_supported: ['S256', 'plain'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
+  }
+
+  if (url.pathname === '/.well-known/oauth-authorization-server' ||
+      url.pathname === '/.well-known/oauth-protected-resource') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({
-      issuer: PUBLIC_API_URL,
-      token_endpoint: `${PUBLIC_API_URL}/oauth/token`,
-      grant_types_supported: ['client_credentials'],
-      token_endpoint_auth_methods_supported: ['client_secret_post'],
-      response_types_supported: ['token'],
-    }))
+    res.end(JSON.stringify(discovery))
     return
   }
 
@@ -54,7 +59,10 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   const apiKey = req.headers.authorization?.replace(/^Bearer\s+/i, '')
 
   if (!apiKey) {
-    res.writeHead(401, { 'Content-Type': 'application/json' })
+    res.writeHead(401, {
+      'Content-Type': 'application/json',
+      'WWW-Authenticate': `Bearer realm="eliph", as_uri="${PUBLIC_API_URL}"`,
+    })
     res.end(JSON.stringify({ error: 'Authorization: Bearer <api-key> header required' }))
     return
   }
