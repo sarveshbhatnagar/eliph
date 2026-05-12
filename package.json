@@ -27,6 +27,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "jsonwebtoken": "^9.0.3"
   }
 }
