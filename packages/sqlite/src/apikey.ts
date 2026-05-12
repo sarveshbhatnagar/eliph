@@ -6,6 +6,14 @@ import { randomUUID } from 'crypto'
 export class SqliteApiKeyStore implements IApiKeyStore {
   constructor(private db: Database.Database) {}
 
+  async findById(id: string): Promise<ApiKey | null> {
+    const row = this.db
+      .prepare('SELECT id, label, created_at, key_hash, org_key_id FROM api_keys WHERE id = ?')
+      .get(id) as { id: string; label: string; created_at: string; key_hash: string; org_key_id: string } | undefined
+    if (!row) return null
+    return { id: row.id, key: row.key_hash, label: row.label, createdAt: new Date(row.created_at), orgKeyId: row.org_key_id }
+  }
+
   async find(rawKey: string): Promise<ApiKey | null> {
     const rows = this.db
       .prepare('SELECT id, label, created_at, key_hash, org_key_id FROM api_keys')

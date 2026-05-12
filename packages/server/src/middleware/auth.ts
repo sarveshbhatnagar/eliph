@@ -7,7 +7,7 @@ export const ADMIN_OWNER_ID = '__admin__'
 export type AuthContext =
   | { type: 'admin' }
   | { type: 'org'; orgKeyId: string; keyLimit: number }
-  | { type: 'api'; apiKeyId: string }
+  | { type: 'api'; apiKeyId: string; apiKeyLabel: string; orgKeyId: string }
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -48,7 +48,13 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
       try {
         const payload = jwt.verify(token, jwtSecret) as { apiKeyId: string }
         if (payload?.apiKeyId) {
-          request.authContext = { type: 'api', apiKeyId: payload.apiKeyId }
+          const keyFromJwt = await apiKeyStore.findById(payload.apiKeyId)
+          request.authContext = {
+            type: 'api',
+            apiKeyId: payload.apiKeyId,
+            apiKeyLabel: keyFromJwt?.label ?? '',
+            orgKeyId: keyFromJwt?.orgKeyId ?? '',
+          }
           return
         }
       } catch {
@@ -59,7 +65,7 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
     // Raw API key
     const apiKey = await apiKeyStore.find(token)
     if (apiKey) {
-      request.authContext = { type: 'api', apiKeyId: apiKey.id }
+      request.authContext = { type: 'api', apiKeyId: apiKey.id, apiKeyLabel: apiKey.label, orgKeyId: apiKey.orgKeyId }
       return
     }
 

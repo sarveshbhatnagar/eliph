@@ -1,6 +1,6 @@
 import Fastify from 'fastify'
 import fastifySwagger from '@fastify/swagger'
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore } from '@eliph/core'
+import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore, InMemoryUsageStore } from '@eliph/core'
 import { registerSharedSchemas } from './app'
 import { keysRoutes } from './routes/keys'
 import { orgKeysRoutes } from './routes/orgkeys'
@@ -17,6 +17,7 @@ export async function generateSpec(): Promise<object> {
     sessionStore: new InMemorySessionStore(),
     apiKeyStore,
     orgKeyStore,
+    usageStore: new InMemoryUsageStore(),
   }
 
   const app = Fastify()
@@ -45,9 +46,9 @@ export async function generateSpec(): Promise<object> {
 
   registerSharedSchemas(app)
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
-  app.register(orgKeysRoutes(stores.orgKeyStore))
+  app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
-  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore))
+  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore))
 
   await app.ready()
   return app.swagger()

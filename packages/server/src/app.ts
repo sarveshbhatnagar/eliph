@@ -1,6 +1,6 @@
 import Fastify, { FastifyInstance } from 'fastify'
 import cors from '@fastify/cors'
-import { IWorkflowStore, ISessionStore, IApiKeyStore, IOrgKeyStore } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, IApiKeyStore, IOrgKeyStore, IUsageStore } from '@eliph/core'
 import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
 import { orgKeysRoutes } from './routes/orgkeys'
@@ -13,6 +13,7 @@ export interface Stores {
   sessionStore: ISessionStore
   apiKeyStore: IApiKeyStore
   orgKeyStore: IOrgKeyStore
+  usageStore: IUsageStore
 }
 
 export function registerSharedSchemas(app: FastifyInstance): void {
@@ -105,9 +106,9 @@ export function buildApp(stores: Stores): FastifyInstance {
 
   app.register(oauthRoutes(stores.apiKeyStore))
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
-  app.register(orgKeysRoutes(stores.orgKeyStore))
+  app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
-  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore))
+  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore))
 
   app.setErrorHandler((error, _req, reply) => {
     const status = (error as any).statusCode ?? 500

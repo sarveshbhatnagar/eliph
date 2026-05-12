@@ -31,8 +31,23 @@ export interface IOrgKeyStore {
   regenerate(id: string): Promise<{ rawKey: string }>
 }
 
+export type UsageEventType = 'advance' | 'session_created'
+
+export interface UsageByKey {
+  apiKeyId: string
+  apiKeyLabel: string
+  advances: number
+  sessionsCreated: number
+}
+
+export interface IUsageStore {
+  record(event: { orgKeyId: string; apiKeyId: string; apiKeyLabel: string; eventType: UsageEventType }): Promise<void>
+  query(orgKeyId: string, from?: Date, to?: Date): Promise<UsageByKey[]>
+}
+
 export interface IApiKeyStore {
   find(rawKey: string): Promise<ApiKey | null>
+  findById(id: string): Promise<ApiKey | null>
   create(label: string, orgKeyId: string): Promise<{ rawKey: string; record: ApiKey }>
   delete(id: string): Promise<void>
   list(orgKeyId?: string): Promise<Omit<ApiKey, 'key'>[]>

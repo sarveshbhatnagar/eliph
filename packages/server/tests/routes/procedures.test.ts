@@ -1,5 +1,5 @@
 import { buildApp } from '../../src/app'
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore } from '@eliph/core'
+import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore, InMemoryUsageStore } from '@eliph/core'
 
 async function makeAuthedApp() {
   const orgKeyStore = new InMemoryOrgKeyStore()
@@ -10,6 +10,7 @@ async function makeAuthedApp() {
     sessionStore: new InMemorySessionStore(),
     apiKeyStore,
     orgKeyStore,
+    usageStore: new InMemoryUsageStore(),
   }
   const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
   const app = buildApp(stores)

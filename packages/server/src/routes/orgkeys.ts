@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
-import { IOrgKeyStore } from '@eliph/core'
+import { IOrgKeyStore, IUsageStore } from '@eliph/core'
 
-export function orgKeysRoutes(orgKeyStore: IOrgKeyStore) {
+export function orgKeysRoutes(orgKeyStore: IOrgKeyStore, usageStore: IUsageStore) {
   return async (app: FastifyInstance) => {
 
     // POST /admin/org-keys — create an org key
@@ -139,5 +139,34 @@ export function orgKeysRoutes(orgKeyStore: IOrgKeyStore) {
       await orgKeyStore.updateLimit(req.params.id, req.body.keyLimit)
       reply.code(204).send()
     })
+
+    // GET /admin/usage/:orgKeyId — usage breakdown by API key
+    app.get<{ Params: { orgKeyId: string }; Querystring: { from?: string; to?: string } }>(
+      '/admin/usage/:orgKeyId', {
+        schema: {
+          tags: ['Admin'],
+          summary: 'Usage breakdown for an org by API key label (admin only)',
+          security: [{ BearerAuth: [] }],
+          params: { type: 'object', properties: { orgKeyId: { type: 'string' } } },
+          querystring: {
+            type: 'object',
+            properties: {
+              from: { type: 'string', description: 'ISO date e.g. 2026-05-01' },
+              to:   { type: 'string', description: 'ISO date e.g. 2026-05-31' },
+            },
+          },
+        } as any,
+      }, async (req, reply) => {
+        if (req.authContext?.type !== 'admin') {
+          return reply.code(403).send({ error: 'Admin access required', code: 'FORBIDDEN' })
+        }
+        const from = req.query.from ? new Date(req.query.from) : undefined
+        const to   = req.query.to   ? new Date(req.query.to)   : undefined
+        const rows = await usageStore.query(req.params.orgKeyId, from, to)
+        const totalAdvances = rows.reduce((s, r) => s + r.advances, 0)
+        const totalSessions = rows.reduce((s, r) => s + r.sessionsCreated, 0)
+        reply.send({ orgKeyId: req.params.orgKeyId, totalAdvances, totalSessions, byKey: rows })
+      }
+    )
   }
 }

@@ -9,6 +9,10 @@ export class InMemoryApiKeyStore implements IApiKeyStore {
 
   constructor(private orgKeyStore?: InMemoryOrgKeyStore) {}
 
+  async findById(id: string): Promise<ApiKey | null> {
+    return this.store.get(id) ?? null
+  }
+
   async find(rawKey: string): Promise<ApiKey | null> {
     for (const record of this.store.values()) {
       if (await bcrypt.compare(rawKey, record.key)) return record

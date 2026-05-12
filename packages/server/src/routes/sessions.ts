@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest } from 'fastify'
-import { IWorkflowStore, ISessionStore, Session, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, IUsageStore, Session, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements } from '@eliph/core'
 import { randomUUID } from 'crypto'
 import { ADMIN_OWNER_ID } from '../middleware/auth'
 
@@ -11,7 +11,13 @@ function ownerId(req: FastifyRequest): string {
   return ADMIN_OWNER_ID
 }
 
-export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
+function recordUsage(req: FastifyRequest, usageStore: IUsageStore, eventType: 'advance' | 'session_created') {
+  const ctx = req.authContext
+  if (ctx?.type !== 'api' || !ctx.orgKeyId) return
+  usageStore.record({ orgKeyId: ctx.orgKeyId, apiKeyId: ctx.apiKeyId, apiKeyLabel: ctx.apiKeyLabel, eventType }).catch(() => {})
+}
+
+export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore, usageStore: IUsageStore) {
   return async (app: FastifyInstance) => {
     app.post<{ Body: { workflow: string } }>('/session', {
       schema: {
@@ -40,6 +46,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         createdAt: new Date(),
       }
       await sessionStore.save(session)
+      recordUsage(req, usageStore, 'session_created')
       reply.code(201).send(session)
     })
 
@@ -152,6 +159,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           const newState = computeNextState(graph, session, req.body.completed_action)
           const updated = applyAdvance(session, newState)
           await sessionStore.save(updated)
+          recordUsage(req, usageStore, 'advance')
           reply.send(updated)
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })

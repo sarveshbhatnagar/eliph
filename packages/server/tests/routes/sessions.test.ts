@@ -1,5 +1,5 @@
 import { buildApp } from '../../src/app'
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore, WorkflowGraph } from '@eliph/core'
+import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore, InMemoryUsageStore, WorkflowGraph } from '@eliph/core'
 
 const baseGraph: WorkflowGraph = {
   name: 'flow',
@@ -24,6 +24,7 @@ async function makeAuthedApp() {
     sessionStore: new InMemorySessionStore(),
     apiKeyStore,
     orgKeyStore,
+    usageStore: new InMemoryUsageStore(),
   }
   const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
   const apiKeyId = record.id

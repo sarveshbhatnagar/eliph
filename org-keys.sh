@@ -47,6 +47,7 @@ usage() {
   echo "  revoke <label>                    Revoke an org key entirely"
   echo "  keys <label>                      List API keys created under an org"
   echo "  delete-key <label> <keyLabel>     Delete an API key by org + key label"
+  echo "  usage <label> [from] [to]         Usage breakdown by API key (dates YYYY-MM-DD)"
   echo ""
   echo "Examples:"
   echo "  ./org-keys.sh list"
@@ -56,6 +57,8 @@ usage() {
   echo "  ./org-keys.sh revoke amazon"
   echo "  ./org-keys.sh keys amazon"
   echo "  ./org-keys.sh delete-key amazon prod-key-1"
+  echo "  ./org-keys.sh usage amazon"
+  echo "  ./org-keys.sh usage amazon 2026-05-01 2026-05-31"
   echo ""
 }
 
@@ -269,6 +272,43 @@ sys.exit(1)
     else
       echo "Failed (HTTP $STATUS)."
     fi
+    ;;
+
+  usage)
+    if [ -z "$2" ]; then
+      echo "Usage: ./org-keys.sh usage <label> [from] [to]"
+      exit 1
+    fi
+    ID=$(resolve_org_id "$2")
+    if [ -z "$ID" ]; then
+      echo "Error: org '$2' not found."
+      exit 1
+    fi
+    FROM_PARAM=""
+    TO_PARAM=""
+    [ -n "$3" ] && FROM_PARAM="&from=$3"
+    [ -n "$4" ] && TO_PARAM="&to=$4"
+    echo "Usage for '$2'${3:+ from $3}${4:+ to $4}:"
+    curl -s "$API/admin/usage/$ID?${FROM_PARAM}${TO_PARAM}" \
+      -H "Authorization: Bearer $ADMIN_SECRET" | \
+      python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if isinstance(data, dict) and 'error' in data:
+  print('  Error:', data['error'])
+  exit(1)
+total_a = data.get('totalAdvances', 0)
+total_s = data.get('totalSessions', 0)
+print('  Total advances:        ', total_a)
+print('  Total sessions created:', total_s)
+if data.get('byKey'):
+  print('')
+  header = '  {:<30} {:>10} {:>10}'.format('API Key Label', 'Advances', 'Sessions')
+  print(header)
+  print('  ' + '-'*52)
+  for k in data['byKey']:
+    print('  {:<30} {:>10} {:>10}'.format(k['apiKeyLabel'], k['advances'], k['sessionsCreated']))
+"
     ;;
 
   *)

@@ -1,5 +1,5 @@
 import { buildApp } from '../../src/app'
-import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore } from '@eliph/core'
+import { InMemoryWorkflowStore, InMemorySessionStore, InMemoryApiKeyStore, InMemoryOrgKeyStore, InMemoryUsageStore } from '@eliph/core'
 
 const ADMIN = 'test-admin-secret'
 
@@ -11,6 +11,7 @@ function makeStores() {
     sessionStore: new InMemorySessionStore(),
     apiKeyStore,
     orgKeyStore,
+    usageStore: new InMemoryUsageStore(),
   }
 }
 
