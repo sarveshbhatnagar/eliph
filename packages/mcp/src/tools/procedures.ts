@@ -11,6 +11,9 @@ export function makeProcedureTools(client: ApiClient) {
     create_procedure: async (args: { workflow_name: string; description: string }) =>
       client.request('POST', '/procedure', { workflow_name: args.workflow_name, description: args.description }),
 
+    update_description: async (args: { workflow_name: string; description: string }) =>
+      client.request('PATCH', `/procedure/${encodeURIComponent(args.workflow_name)}`, { description: args.description }),
+
     delete_procedure: async (args: { workflow_name: string }) => {
       await client.request('DELETE', `/procedure/${encodeURIComponent(args.workflow_name)}`)
       return { deleted: true }

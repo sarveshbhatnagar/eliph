@@ -55,6 +55,31 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       reply.code(204).send()
     })
 
+    app.patch<{ Params: { name: string }; Body: { description: string } }>('/procedure/:name', {
+      schema: {
+        tags: ['Procedures'],
+        summary: 'Update a procedure description',
+        security: authed,
+        params: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+        },
+        body: {
+          type: 'object',
+          required: ['description'],
+          properties: { description: { type: 'string' } },
+        },
+        response: { 200: { $ref: 'WorkflowGraph#' } },
+      } as any,
+    }, async (req, reply) => {
+      const owner = ownerId(req)
+      const graph = await workflowStore.get(req.params.name, owner)
+      if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
+      const updated = { ...graph, description: req.body.description }
+      await workflowStore.save(updated, owner)
+      reply.send(updated)
+    })
+
     app.get<{ Params: { name: string } }>('/procedure/:name', {
       schema: {
         tags: ['Procedures'],
