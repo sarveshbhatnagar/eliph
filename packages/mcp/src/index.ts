@@ -40,8 +40,12 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['workflow_name', 'state_name'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' } } },
   },
   list_states: {
-    description: 'List all states defined in a workflow procedure, including which states are terminal (end states). Use this to understand the full shape of a workflow.',
+    description: 'List all states in a workflow procedure, including name, isTerminal flag, and description. State descriptions contain agent instructions — what to do, what to gather, what decisions to make when a session is in that state.',
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
+  },
+  update_state_description: {
+    description: 'Add or update the description of a state in a workflow procedure. Use this to give agents context about what to do when a session is in this state — what actions to take, what information to gather, what decisions to make. This is the primary way to embed agent instructions into a workflow.',
+    inputSchema: { type: 'object', required: ['workflow_name', 'state_name', 'description'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' }, description: { type: 'string', description: 'What the agent should do / context for this state' } } },
   },
   mark_terminal: {
     description: 'Mark a state as terminal — sessions in this state cannot advance further and the workflow is considered complete. The state named "end" is auto-marked terminal. Use this for other logical end states (e.g. "approved", "rejected", "good_to_buy"). Call this after creating the state via add_transition.',
@@ -56,7 +60,7 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' } } },
   },
   current_state: {
-    description: 'Get the current state and full history of an eliph session. Use this to check where a workflow instance is right now and what path it has taken. Call before advance() to confirm the current position.',
+    description: 'Get the current state and full history of an eliph session. The response includes the state description — agent instructions for what to do in this state. Always read the state description to know what actions or decisions are expected here.',
     inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
   },
   next_transitions: {

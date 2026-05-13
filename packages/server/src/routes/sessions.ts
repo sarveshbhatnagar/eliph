@@ -96,7 +96,13 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         if (!session) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
         const graph = await workflowStore.get(req.query.workflow, session.workflowOwnerId)
         if (!graph) return reply.code(404).send({ error: 'Not found', code: 'NOT_FOUND' })
-        reply.send({ currentState: session.currentState, nextTransitions: getNextTransitions(graph, session.currentState) })
+        const state = graph.states[session.currentState]
+        reply.send({
+          currentState: session.currentState,
+          stateDescription: state?.description ?? null,
+          isTerminal: state?.isTerminal ?? false,
+          nextTransitions: getNextTransitions(graph, session.currentState),
+        })
       }
     )
 

@@ -23,6 +23,7 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     properties: {
       name: { type: 'string' },
       isTerminal: { type: 'boolean' },
+      description: { type: 'string' },
     },
     required: ['name', 'isTerminal'],
   })

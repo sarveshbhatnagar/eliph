@@ -11,6 +11,7 @@ export interface Transition {
 export interface State {
   name: string
   isTerminal: boolean  // true when name === 'end'
+  description?: string // what the agent should do / context for this state
 }
 
 export interface WorkflowGraph {
