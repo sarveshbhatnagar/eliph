@@ -3,6 +3,7 @@ import { IOrgKeyStore, IApiKeyStore } from '@eliph/core'
 import jwt from 'jsonwebtoken'
 
 export const ADMIN_OWNER_ID = '__admin__'
+export const MARKETPLACE_OWNER_ID = '__marketplace__'
 
 export type AuthContext =
   | { type: 'admin' }
@@ -18,6 +19,7 @@ declare module 'fastify' {
 export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeyStore) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.url === '/health') return
+    if (request.method === 'GET' && request.url?.startsWith('/marketplace')) return
     if (request.url === '/oauth/token' && request.method === 'POST') return
     if (request.url?.startsWith('/authorize')) return
     if (request.url === '/.well-known/oauth-authorization-server') return

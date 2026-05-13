@@ -7,6 +7,14 @@ import { makeAdvanceTools } from './tools/advance'
 type ToolHandler = (args: Record<string, any>) => Promise<any>
 
 export const toolMeta: Record<string, { description: string; inputSchema: object }> = {
+  browse_marketplace: {
+    description: 'Browse the Eliph workflow template marketplace. Returns curated workflow templates you can copy into your namespace. Call this before create_procedure — the template you need may already exist. Returns { name, description }[].',
+    inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term' } } },
+  },
+  copy_from_marketplace: {
+    description: 'Copy a marketplace workflow template into your own namespace. The template is copied with all its states, transitions, and state descriptions intact — ready to use immediately or customise. Optionally rename it with workflow_name.',
+    inputSchema: { type: 'object', required: ['template_name'], properties: { template_name: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional new name (defaults to template name)' } } },
+  },
   procedures: {
     description: 'Search eliph for available workflow procedures. Returns { name, description }[] so you can understand what each workflow does without extra calls. Call with no query to list everything, or pass a term to filter by name or description. Use the description to decide which procedure fits the current task, then call procedure(name) to get the full state/transition graph.',
     inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term — filters by name or description substring' } } },

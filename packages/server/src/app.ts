@@ -5,6 +5,7 @@ import { authMiddleware } from './middleware/auth'
 import { keysRoutes } from './routes/keys'
 import { orgKeysRoutes } from './routes/orgkeys'
 import { oauthRoutes } from './routes/oauth'
+import { marketplaceRoutes } from './routes/marketplace'
 import { proceduresRoutes } from './routes/procedures'
 import { sessionsRoutes } from './routes/sessions'
 
@@ -108,6 +109,7 @@ export function buildApp(stores: Stores): FastifyInstance {
   app.register(oauthRoutes(stores.apiKeyStore))
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
+  app.register(marketplaceRoutes(stores.workflowStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore))
 
