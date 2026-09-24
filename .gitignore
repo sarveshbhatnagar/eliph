@@ -1,7 +1,54 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+build/
+.next/
+out/
 docs-site/
+
+# Caches & coverage
+.cache/
+coverage/
+.turbo/
+tmp/
+*.tsbuildinfo
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local databases
 *.db
-.worktrees/
-ecosystem.config.js
+*.db-shm
+*.db-wal
+*.db.bak*
+*.bak-*
+*.sqlite
+*.sqlite3
+
+# Secrets & environment
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
+service-account*.json
+.npmrc
+.netrc
+
+# Local process config (see ecosystem.config.example.js)
+ecosystem.config.js
+
+# Local tooling / OS
+.worktrees/
+.DS_Store
