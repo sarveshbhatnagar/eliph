@@ -1,6 +1,14 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { IOrgKeyStore, IApiKeyStore } from '@eliph/core'
 import jwt from 'jsonwebtoken'
+import { timingSafeEqual } from 'crypto'
+
+function safeEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a)
+  const bb = Buffer.from(b)
+  if (ab.length !== bb.length) return false
+  return timingSafeEqual(ab, bb)
+}
 
 export const ADMIN_OWNER_ID = '__admin__'
 export const MARKETPLACE_OWNER_ID = '__marketplace__'
@@ -30,9 +38,9 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
     }
     const token = auth.slice(7)
 
-    // Admin
+    // Admin (constant-time comparison to prevent timing attacks)
     const adminSecret = process.env.ADMIN_SECRET
-    if (adminSecret && token === adminSecret) {
+    if (adminSecret && safeEqual(token, adminSecret)) {
       request.authContext = { type: 'admin' }
       return
     }

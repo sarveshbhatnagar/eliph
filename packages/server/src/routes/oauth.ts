@@ -8,6 +8,26 @@ const CODE_TTL_MS = 5 * 60 * 1000   // 5 minutes
 
 const ISSUER = process.env.API_URL ?? 'https://eliph-api.revalent.ai'
 
+const SAFE_REDIRECT_SCHEMES = new Set(['https:', 'http:'])
+
+function isSafeRedirectUri(raw: string): boolean {
+  try {
+    const u = new URL(raw)
+    return SAFE_REDIRECT_SCHEMES.has(u.protocol)
+  } catch {
+    return false
+  }
+}
+
+function escHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 // In-memory authorization code store (small TTL, no need for DB)
 interface PendingCode {
   apiKeyId: string
@@ -17,6 +37,14 @@ interface PendingCode {
   expiresAt: number
 }
 const pendingCodes = new Map<string, PendingCode>()
+
+// Periodic cleanup of expired codes so the Map cannot grow unbounded.
+setInterval(() => {
+  const now = Date.now()
+  for (const [code, entry] of pendingCodes) {
+    if (entry.expiresAt < now) pendingCodes.delete(code)
+  }
+}, 60_000).unref()
 
 function generateCode(): string {
   return randomBytes(32).toString('hex')
@@ -53,14 +81,14 @@ const authorizeHtml = (params: URLSearchParams, error?: string) => `<!DOCTYPE ht
 <body>
   <h1>Connect to Eliph</h1>
   <p>Enter your Eliph API key to authorise Claude to access your workflows.</p>
-  ${error ? `<div class="error">${error}</div>` : ''}
+  ${error ? `<div class="error">${escHtml(error)}</div>` : ''}
   <form method="POST" action="/authorize">
-    <input type="hidden" name="response_type" value="${params.get('response_type') ?? ''}"/>
-    <input type="hidden" name="client_id" value="${params.get('client_id') ?? ''}"/>
-    <input type="hidden" name="redirect_uri" value="${params.get('redirect_uri') ?? ''}"/>
-    <input type="hidden" name="code_challenge" value="${params.get('code_challenge') ?? ''}"/>
-    <input type="hidden" name="code_challenge_method" value="${params.get('code_challenge_method') ?? ''}"/>
-    <input type="hidden" name="state" value="${params.get('state') ?? ''}"/>
+    <input type="hidden" name="response_type" value="${escHtml(params.get('response_type') ?? '')}"/>
+    <input type="hidden" name="client_id" value="${escHtml(params.get('client_id') ?? '')}"/>
+    <input type="hidden" name="redirect_uri" value="${escHtml(params.get('redirect_uri') ?? '')}"/>
+    <input type="hidden" name="code_challenge" value="${escHtml(params.get('code_challenge') ?? '')}"/>
+    <input type="hidden" name="code_challenge_method" value="${escHtml(params.get('code_challenge_method') ?? '')}"/>
+    <input type="hidden" name="state" value="${escHtml(params.get('state') ?? '')}"/>
     <label for="api_key">API Key</label>
     <input id="api_key" name="api_key" type="password" placeholder="Paste your API key" autocomplete="off" required/>
     <p class="hint">Your API key was shown once when created via POST /keys.</p>
@@ -109,6 +137,9 @@ export function oauthRoutes(apiKeyStore: IApiKeyStore) {
 
       if (!redirect_uri) {
         return reply.code(400).send({ error: 'invalid_request', error_description: 'redirect_uri required' })
+      }
+      if (!isSafeRedirectUri(redirect_uri)) {
+        return reply.code(400).send({ error: 'invalid_request', error_description: 'redirect_uri must be http(s)' })
       }
 
       const apiKey = await apiKeyStore.find(api_key)
@@ -159,9 +190,11 @@ export function oauthRoutes(apiKeyStore: IApiKeyStore) {
           return reply.code(400).send({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' })
         }
 
-        if (pending.codeChallenge && code_verifier) {
+        // PKCE: if a challenge was sent at /authorize, a valid verifier is REQUIRED.
+        // Old version skipped the check entirely if code_verifier was missing → bypass.
+        if (pending.codeChallenge) {
           const method = pending.codeChallengeMethod ?? 'plain'
-          if (!verifyPkce(code_verifier, pending.codeChallenge, method)) {
+          if (!code_verifier || !verifyPkce(code_verifier, pending.codeChallenge, method)) {
             return reply.code(400).send({ error: 'invalid_grant', error_description: 'PKCE verification failed' })
           }
         }

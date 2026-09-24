@@ -20,10 +20,17 @@ function readBody(req: IncomingMessage): Promise<unknown> {
   })
 }
 
+// MCP clients (Claude Desktop, etc.) do not use browsers and don't need CORS.
+// Only allow CORS when the request actually carries an Origin header, and echo
+// it back — never the wildcard '*' for an authenticated API.
 const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+  const origin = req.headers.origin
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin)
+    res.setHeader('Vary', 'Origin')
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Mcp-Session-Id')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204)
