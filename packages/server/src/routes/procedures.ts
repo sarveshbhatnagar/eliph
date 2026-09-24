@@ -6,7 +6,10 @@ const authed = [{ BearerAuth: [] }]
 
 function ownerId(req: FastifyRequest): string {
   const ctx = req.authContext
-  if (ctx?.type === 'api') return ctx.apiKeyId
+  // Scope procedures to the org so all API keys in an org share one namespace
+  // and the org key (used by the dashboard) can list/manage procedures too.
+  if (ctx?.type === 'api') return ctx.orgKeyId
+  if (ctx?.type === 'org') return ctx.orgKeyId
   return ADMIN_OWNER_ID
 }
 

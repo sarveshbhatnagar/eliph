@@ -7,7 +7,8 @@ const authed = [{ BearerAuth: [] }]
 
 function ownerId(req: FastifyRequest): string {
   const ctx = req.authContext
-  if (ctx?.type === 'api') return ctx.apiKeyId
+  if (ctx?.type === 'api') return ctx.orgKeyId
+  if (ctx?.type === 'org') return ctx.orgKeyId
   return ADMIN_OWNER_ID
 }
 
