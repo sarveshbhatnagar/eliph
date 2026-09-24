@@ -24,6 +24,14 @@ export function openDb(path: string): Database.Database {
       PRIMARY KEY (name, api_key_id)
     );
 
+    CREATE VIRTUAL TABLE IF NOT EXISTS workflows_fts USING fts5(
+      name,
+      description,
+      state_text,
+      api_key_id UNINDEXED,
+      tokenize = 'unicode61'
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       id            TEXT PRIMARY KEY,
       workflow_name TEXT NOT NULL,

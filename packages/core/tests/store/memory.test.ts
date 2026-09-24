@@ -13,6 +13,14 @@ function makeGraph(name = 'test'): WorkflowGraph {
   }
 }
 
+function makeGraphWith(
+  name: string,
+  description: string,
+  states: WorkflowGraph['states'] = { start: { name: 'start', isTerminal: false } },
+): WorkflowGraph {
+  return { name, description, states, transitions: [] }
+}
+
 const OWN = 'owner-1'
 
 function makeSession(id = 'sess-1'): Session {
@@ -46,13 +54,55 @@ describe('InMemoryWorkflowStore', () => {
     expect(await store.list(OWN)).toEqual(expect.arrayContaining(['a', 'b']))
   })
 
-  it('searches by name substring', async () => {
+  it('searches by name token (prefix)', async () => {
     const store = new InMemoryWorkflowStore()
     await store.save(makeGraph('onboarding'), OWN)
     await store.save(makeGraph('checkout'), OWN)
-    const results = await store.search('board', OWN)
+    const results = await store.search('onboard', OWN)
     expect(results.map((r: any) => r.name)).toContain('onboarding')
     expect(results.map((r: any) => r.name)).not.toContain('checkout')
+  })
+
+  it('matches on state-text (state names + descriptions)', async () => {
+    const store = new InMemoryWorkflowStore()
+    await store.save(
+      makeGraphWith('refunds', 'handle money back', {
+        review: { name: 'review', isTerminal: false, description: 'escalate to manager' },
+      }),
+      OWN,
+    )
+    await store.save(makeGraphWith('checkout', 'pay for items'), OWN)
+    const results = await store.search('escalate', OWN)
+    expect(results.map((r: any) => r.name)).toEqual(['refunds'])
+  })
+
+  it('ranks name matches above description-only matches', async () => {
+    const store = new InMemoryWorkflowStore()
+    // name match
+    await store.save(makeGraphWith('payment', 'collect funds'), OWN)
+    // description-only match for the same token
+    await store.save(makeGraphWith('orders', 'process a payment'), OWN)
+    const results = await store.search('payment', OWN)
+    expect(results.map((r: any) => r.name)).toEqual(['payment', 'orders'])
+  })
+
+  it('matches any of multiple tokens (OR semantics) and ranks by hit count', async () => {
+    const store = new InMemoryWorkflowStore()
+    await store.save(makeGraphWith('alpha', 'red green'), OWN)
+    await store.save(makeGraphWith('beta', 'green only'), OWN)
+    await store.save(makeGraphWith('gamma', 'unrelated text'), OWN)
+    const results = await store.search('red green', OWN)
+    expect(results.map((r: any) => r.name)).toEqual(['alpha', 'beta'])
+    expect(results.map((r: any) => r.name)).not.toContain('gamma')
+  })
+
+  it('empty query returns all workflows for the owner', async () => {
+    const store = new InMemoryWorkflowStore()
+    await store.save(makeGraph('b'), OWN)
+    await store.save(makeGraph('a'), OWN)
+    await store.save(makeGraph('a'), 'other-owner')
+    const results = await store.search('   ', OWN)
+    expect(results.map((r: any) => r.name)).toEqual(['a', 'b'])
   })
 
   it('deletes a workflow', async () => {
