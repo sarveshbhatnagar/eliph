@@ -26,8 +26,8 @@ async function makeAuthedApp() {
     orgKeyStore,
     usageStore: new InMemoryUsageStore(),
   }
-  const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
-  const apiKeyId = record.id
+  const { rawKey } = await stores.apiKeyStore.create('test', org.id)
+  const apiKeyId = org.id // owner namespace is the org id
   await stores.workflowStore.save(baseGraph, apiKeyId)
   const app = buildApp(stores)
   await app.ready()
