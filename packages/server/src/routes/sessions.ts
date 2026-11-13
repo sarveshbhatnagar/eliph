@@ -103,7 +103,13 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         summary: 'Delete a session',
         security: authed,
         params: idParams,
-        response: { 204: { type: 'null' } },
+        response: {
+          204: { type: 'null' },
+          404: {
+            type: 'object',
+            properties: { error: { type: 'string' }, code: { type: 'string' } },
+          },
+        },
       } as any,
     }, async (req, reply) => {
       const session = await sessionStore.get(req.params.id)

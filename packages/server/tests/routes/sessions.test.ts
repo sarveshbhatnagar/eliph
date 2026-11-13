@@ -317,6 +317,7 @@ describe('session access control', () => {
     const { app, stores, otherRawKey } = await setupTwoOrgs()
     const res = await app.inject({ method: 'DELETE', url: '/session/s1', headers: authed(otherRawKey) })
     expect(res.statusCode).toBe(404)
+    expect(res.json()).toEqual({ error: 'Not found', code: 'NOT_FOUND' })
     expect(await stores.sessionStore.get('s1')).not.toBeNull()
   })
 
