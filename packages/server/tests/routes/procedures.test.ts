@@ -12,10 +12,10 @@ async function makeAuthedApp() {
     orgKeyStore,
     usageStore: new InMemoryUsageStore(),
   }
-  const { rawKey, record } = await stores.apiKeyStore.create('test', org.id)
+  const { rawKey } = await stores.apiKeyStore.create('test', org.id)
   const app = buildApp(stores)
   await app.ready()
-  return { app, stores, rawKey, apiKeyId: record.id }
+  return { app, stores, rawKey, apiKeyId: org.id } // owner namespace is the org id
 }
 
 function authed(rawKey: string) {
