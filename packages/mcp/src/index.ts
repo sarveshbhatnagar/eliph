@@ -38,6 +38,7 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
   define_procedure: {
     description: 'Create or replace a whole eliph workflow procedure in ONE atomic call: description, all transitions, state descriptions and terminal states. This is the preferred way to create a workflow or rewrite one completely; add_transition, remove_transition, update_state_description and mark_terminal remain for small incremental edits.\n' +
       'transitions: transition strings applied in order, same syntax as add_transition ("A -> B" deterministic, "A -action-> B" symbolic, "A -.7-> B" probabilistic; chains like "A -> B -> C" allowed). The state "start" always exists; "end" is automatically terminal.\n' +
+      'An entry may instead be an object { "transition": "reviewing -approved-> merged", "requires": ["pr_url"] }: a single transition (not a chain) that can only be taken once those session-data keys have a value (not null or blank). advance() then fails with MISSING_REQUIRED_DATA, changing nothing, until the keys are in the session data or passed in that advance call\'s "data". Use it to make agents record evidence of the work (a link, an id) before moving on.\n' +
       'states (optional): { "<state>": { "description": "what the agent should do here", "terminal": true } }. Every state named there must appear in a transition (or be "start"); an unknown name is rejected as a likely typo.\n' +
       'Example: { "workflow_name": "code_review", "description": "Review and merge a pull request", "transitions": ["start -> reviewing", "reviewing -approved-> merged", "reviewing -changes_requested-> start"], "states": { "start": { "description": "Open the PR and summarise the change" }, "reviewing": { "description": "Read the diff; complete approved or changes_requested" }, "merged": { "description": "Merge and report the link", "terminal": true } } }\n' +
       'The whole definition is validated before anything is saved: if any transition or state is invalid, the error names it and nothing changes. If a procedure with this name already exists this fails with CONFLICT unless overwrite: true; replacing is also refused (CONFLICT, listing the states) while any of your sessions is in a state the new definition removes. The response is the saved graph plus "warnings": advisory problems (probabilistic weights not summing to 1.0, ambiguous exits, dead ends, no reachable terminal state).',
@@ -47,7 +48,23 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
       properties: {
         workflow_name: { type: 'string', description: 'Unique name for this workflow' },
         description: { type: 'string', description: 'What this workflow does' },
-        transitions: { type: 'array', items: { type: 'string' }, description: 'Transition strings applied in order, e.g. ["start -> review", "review -approved-> end"]' },
+        transitions: {
+          type: 'array',
+          items: {
+            anyOf: [
+              { type: 'string' },
+              {
+                type: 'object',
+                required: ['transition', 'requires'],
+                properties: {
+                  transition: { type: 'string', description: 'One transition (not a chain), e.g. "review -approved-> end"' },
+                  requires: { type: 'array', items: { type: 'string' }, description: 'Session-data keys that must have a value before this transition can be taken' },
+                },
+              },
+            ],
+          },
+          description: 'Transitions applied in order: strings, e.g. ["start -> review", "review -approved-> end"], or { "transition", "requires" } objects for a transition that needs session data, e.g. { "transition": "review -approved-> end", "requires": ["pr_url"] }',
+        },
         states: {
           type: 'object',
           description: 'Optional. Per-state settings keyed by state name.',
@@ -70,6 +87,14 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
   remove_transition: {
     description: 'Remove an existing transition from a workflow procedure. Use the same format as add_transition: "from_state -> to_state". The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They are advisory only.',
     inputSchema: { type: 'object', required: ['workflow_name', 'transition'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string' } } },
+  },
+  set_transition_requirements: {
+    description: 'Require session data before a transition can be taken, so an agent has to record evidence of the work (a PR link, a ticket id, a decision) instead of just declaring completed_action. transition names ONE existing transition exactly as it was added (e.g. "review -approved-> merged"; no chains). requires lists session-data keys (at most 20; letters, digits, "_", "." and "-") that must each have a value that is not null or a blank string; advance() along that transition otherwise fails with MISSING_REQUIRED_DATA (listing the missing keys) and changes nothing. The agent can pass the keys in the same advance call\'s "data". Pass requires: [] to remove the requirement. The requirement is shown as "requires" on the transition in procedure() and in nextTransitions. Pinned sessions keep the requirements of their snapshot. The response is the updated graph plus "warnings".',
+    inputSchema: { type: 'object', required: ['workflow_name', 'transition', 'requires'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string', description: 'One existing transition, e.g. "review -approved-> merged"' }, requires: { type: 'array', items: { type: 'string' }, description: 'Session-data keys that must have a value before the transition can be taken; [] clears the requirement.' } } },
+  },
+  procedure_stats: {
+    description: 'Per-state statistics of a workflow procedure, computed from the event logs of your sessions of it (the newest 1000). Use it to find the step where runs stall or backtrack, then improve that state\'s description or transitions. Returns { workflow, sessionsAnalyzed, truncated, totals: { sessions, completed, active }, states: [{ state, entered, currentlyHere, exits: [{ to, action, count }], resetsAway, avgDwellMs }] }: a state with many sessions currentlyHere and a long avgDwellMs is where runs stall; many resetsAway or exits back to earlier states show backtracking. Sessions older than the event log count only in totals, currentlyHere and entered.',
+    inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
   remove_state: {
     description: 'Remove a state and all its transitions from a workflow procedure. Will fail if any active sessions are currently in that state. The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They are advisory only.',
@@ -100,11 +125,11 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
   next_transitions: {
-    description: 'List the transitions available from the current state of a session (only session_id is needed). Each result includes an "advance_with" field telling you exactly what to pass to advance(). For symbolic transitions this is { completed_action: "action_name" }; for deterministic it says to call advance() with no argument.',
+    description: 'List the transitions available from the current state of a session (only session_id is needed). Each result includes an "advance_with" field telling you exactly what to pass to advance(). For symbolic transitions this is { completed_action: "action_name" }; for deterministic it says to call advance() with no argument. A transition with "requires" (a list of session-data keys) can only be taken once each key has a value: pass them in the same advance() call\'s "data" if they are not in the session data yet.',
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
   advance: {
-    description: 'Advance an eliph session to the next state (only session_id is needed; workflow_name is optional). If a transition requires a completed_action, pass it here (the nextTransitions of the previous response tell you which). This is the core operation for driving a workflow forward step by step. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" to save what you gathered in this step (shallow-merged into the session data; null removes a key) and a "note" for the event log. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation.',
+    description: 'Advance an eliph session to the next state (only session_id is needed; workflow_name is optional). If a transition requires a completed_action, pass it here (the nextTransitions of the previous response tell you which). This is the core operation for driving a workflow forward step by step. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" to save what you gathered in this step (shallow-merged into the session data; null removes a key) and a "note" for the event log. If the transition taken lists "requires" (see nextTransitions), each of those session-data keys must have a value (not null or blank) once this call\'s "data" is merged; otherwise advance fails with MISSING_REQUIRED_DATA naming the missing keys and nothing changes, so pass them in "data" in the same call. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation.',
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, completed_action: { type: 'string', description: 'The action that was completed to enable this transition (if required)' }, data: { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the session data; a key set to null removes it. Store what you gathered (ids, links, decisions) so the work can be resumed later.' }, note: { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the session event log (max 2000 characters), e.g. why this step was taken.' } } },
   },
   reset_state: {

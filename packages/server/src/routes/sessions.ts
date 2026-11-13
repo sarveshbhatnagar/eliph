@@ -1,8 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import {
-  IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, computeNextState,
+  IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions,
   applyAdvance, applyReset, applyDataPatch, mergeSessionData, requirements, graphWarnings, hasState, SessionDataError, SESSION_NOTE_MAX_LENGTH,
-  sessionRevision,
+  sessionRevision, chooseTransition, assertRequiredData, RequiredDataError,
 } from '@eliph/core'
 import { randomUUID } from 'crypto'
 import { requestOwnerId, canAccessSession, sessionOwnerIdsForListing } from '../middleware/auth'
@@ -68,6 +68,17 @@ function graphFor(workflowStore: IWorkflowStore, session: Session): Promise<Work
 
 /** How many times a read-modify-write is attempted before answering 409. */
 export const SESSION_WRITE_ATTEMPTS = 10
+
+/** Declared 409 response of the session write routes (see withWriteRetries). */
+const conflictResponse = {
+  type: 'object',
+  description: 'CONFLICT: concurrent writes to the session kept winning; nothing was changed by this request, so it can be retried.',
+  properties: { error: { type: 'string' }, code: { type: 'string', enum: ['CONFLICT'] } },
+  required: ['error', 'code'],
+}
+
+/** One sentence for the description of every route that can answer conflictResponse. */
+const CONFLICT_NOTE = ' If the session keeps being changed by concurrent requests the response is 409 CONFLICT and nothing was changed; retry the request.'
 
 const WRITE_CONFLICT = {
   error: 'The session was changed by other requests at the same time and this change could not be applied. Nothing was changed by this request; retry it.',
@@ -292,7 +303,10 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         schema: {
           tags: ['Sessions'],
           summary: 'Advance session to the next state',
-          description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the new state.',
+          description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the new state. '
+            + 'A transition with "requires" can only be taken when each of those session-data keys has a value (not null or a blank string) once this '
+            + 'request\'s `data` is merged; otherwise the response is 400 MISSING_REQUIRED_DATA with the keys in `missing`, and nothing is changed.'
+            + CONFLICT_NOTE,
           security: authed,
           params: idParams,
           body: {
@@ -306,6 +320,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
           response: {
             200: { $ref: 'Session#' },
+            409: conflictResponse,
           },
         } as any,
       }, async (req, reply) => withWriteRetries(reply, async () => {
@@ -316,10 +331,13 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         const body = req.body ?? {}
         let updated: Session
         try {
-          const newState = computeNextState(graph, session, body.completed_action)
-          updated = applyAdvance(session, newState, { action: body.completed_action, note: body.note, data: body.data })
+          const transition = chooseTransition(graph, session, body.completed_action)
+          updated = applyAdvance(session, transition.to, { action: body.completed_action, note: body.note, data: body.data })
+          // Checked against the data as it would be after this advance; on failure nothing is saved
+          assertRequiredData(transition, updated.data)
         } catch (e: any) {
           if (e instanceof SessionDataError) sendDataError(reply, e)
+          else if (e instanceof RequiredDataError) reply.code(400).send({ error: e.message, code: e.code, missing: e.missing })
           else reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
           return true
         }
@@ -335,7 +353,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         schema: {
           tags: ['Sessions'],
           summary: 'Reset session to a target state (default: start)',
-          description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the target state.',
+          description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the target state.'
+            + CONFLICT_NOTE,
           security: authed,
           params: idParams,
           body: {
@@ -349,6 +368,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
           response: {
             200: { $ref: 'Session#' },
+            409: conflictResponse,
           },
         } as any,
       }, async (req, reply) => withWriteRetries(reply, async () => {
@@ -382,7 +402,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         schema: {
           tags: ['Sessions'],
           summary: 'Merge data into a session without changing its state',
-          description: 'Shallow-merges `data` into the session data (a key set to null removes it). The merged data may be at most 64 KB serialized (413 PAYLOAD_TOO_LARGE otherwise). Returns the session with its full data and the step context of its current state.',
+          description: 'Shallow-merges `data` into the session data (a key set to null removes it). The merged data may be at most 64 KB serialized (413 PAYLOAD_TOO_LARGE otherwise). Returns the session with its full data and the step context of its current state.'
+            + CONFLICT_NOTE,
           security: authed,
           params: idParams,
           body: {
@@ -392,6 +413,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           },
           response: {
             200: { $ref: 'Session#' },
+            409: conflictResponse,
           },
         } as any,
       }, async (req, reply) => withWriteRetries(reply, async () => {

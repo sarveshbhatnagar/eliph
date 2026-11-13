@@ -44,6 +44,12 @@ export function registerSharedSchemas(app: FastifyInstance): void {
       type: { type: 'string', enum: ['deterministic', 'probabilistic', 'symbolic'] },
       weight: { type: 'number' },
       action: { type: 'string' },
+      requires: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Session-data keys that must have a value (not null or a blank string) before this transition can be taken. '
+          + 'Supply them with `data` in the same advance call. Absent when the transition requires nothing.',
+      },
     },
     required: ['from', 'to', 'type'],
   })
@@ -165,7 +171,7 @@ export function buildApp(stores: Stores): FastifyInstance {
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(marketplaceRoutes(stores.workflowStore))
-  app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
+  app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore, stores.apiKeyStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   app.setErrorHandler((error, _req, reply) => {

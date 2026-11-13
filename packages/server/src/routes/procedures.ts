@@ -1,6 +1,9 @@
 import { FastifyInstance } from 'fastify'
-import { IWorkflowStore, ISessionStore, WorkflowGraph, StateDefinition, addTransition, removeTransition, removeState, markStateTerminal, buildGraph, hasState, DEFINITION_LIMITS } from '@eliph/core'
-import { requestOwnerId } from '../middleware/auth'
+import {
+  IWorkflowStore, ISessionStore, IApiKeyStore, WorkflowGraph, TransitionDefinition, StateDefinition, addTransition, removeTransition, removeState,
+  markStateTerminal, buildGraph, hasState, DEFINITION_LIMITS, REQUIRES_LIMITS, REQUIRES_NAME_PATTERN, setTransitionRequires, computeProcedureStats,
+} from '@eliph/core'
+import { requestOwnerId, sessionOwnerIdsForListing } from '../middleware/auth'
 import { withWarnings, workflowExistsConflict, overwriteProperty } from './workflow-helpers'
 
 const authed = [{ BearerAuth: [] }]
@@ -20,7 +23,72 @@ async function strandedStates(sessionStore: ISessionStore, current: WorkflowGrap
   return stranded
 }
 
-export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
+/** Longest name accepted when a procedure is created (POST /procedure, PUT /procedure/:name). */
+export const PROCEDURE_NAME_MAX_LENGTH = 200
+
+/** At most this many of the newest sessions are analysed by GET /procedure/:name/stats. */
+export const STATS_MAX_SESSIONS = 1000
+
+const requiresSchema = {
+  type: 'array',
+  maxItems: REQUIRES_LIMITS.maxNames,
+  items: { type: 'string', minLength: 1, maxLength: REQUIRES_LIMITS.maxNameLength, pattern: REQUIRES_NAME_PATTERN },
+  description: `Session-data keys (at most ${REQUIRES_LIMITS.maxNames}, each 1-${REQUIRES_LIMITS.maxNameLength} characters of letters, digits, "_", "." or "-") `
+    + 'that must have a value (not null or a blank string) before the transition can be taken.',
+}
+
+const nameParams = {
+  type: 'object',
+  properties: { name: { type: 'string' } },
+}
+
+const statsResponse = {
+  type: 'object',
+  properties: {
+    workflow: { type: 'string' },
+    sessionsAnalyzed: { type: 'integer' },
+    truncated: { type: 'boolean', description: `true when there are more than ${STATS_MAX_SESSIONS} sessions and only the newest ${STATS_MAX_SESSIONS} were analysed.` },
+    totals: {
+      type: 'object',
+      properties: {
+        sessions: { type: 'integer' },
+        completed: { type: 'integer', description: 'Sessions currently in a terminal state.' },
+        active: { type: 'integer', description: 'Sessions not in a terminal state.' },
+      },
+      required: ['sessions', 'completed', 'active'],
+    },
+    states: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          state: { type: 'string' },
+          entered: { type: 'integer', description: 'Times sessions entered the state (created in it, advanced or reset into it).' },
+          currentlyHere: { type: 'integer', description: 'Sessions whose current state it is.' },
+          exits: {
+            type: 'array',
+            description: 'Advances out of the state, by target state and completed_action, most frequent first.',
+            items: {
+              type: 'object',
+              properties: {
+                to: { type: 'string' },
+                action: { type: 'string', nullable: true },
+                count: { type: 'integer' },
+              },
+              required: ['to', 'action', 'count'],
+            },
+          },
+          resetsAway: { type: 'integer', description: 'Resets made while in this state.' },
+          avgDwellMs: { type: 'number', nullable: true, description: 'Mean milliseconds between entering the state and leaving it; null if no session has left it.' },
+        },
+        required: ['state', 'entered', 'currentlyHere', 'exits', 'resetsAway', 'avgDwellMs'],
+      },
+    },
+  },
+  required: ['workflow', 'sessionsAnalyzed', 'truncated', 'totals', 'states'],
+}
+
+export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore, apiKeyStore: IApiKeyStore) {
   return async (app: FastifyInstance) => {
     app.get<{ Querystring: { q?: string } }>('/procedures', {
       schema: {
@@ -118,7 +186,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           type: 'object',
           required: ['workflow_name', 'description'],
           properties: {
-            workflow_name: { type: 'string' },
+            workflow_name: { type: 'string', maxLength: PROCEDURE_NAME_MAX_LENGTH },
             description: { type: 'string' },
             overwrite: overwriteProperty,
           },
@@ -145,7 +213,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
 
     app.put<{
       Params: { name: string }
-      Body: { description: string; transitions: string[]; states?: Record<string, StateDefinition>; overwrite?: boolean }
+      Body: { description: string; transitions: TransitionDefinition[]; states?: Record<string, StateDefinition>; overwrite?: boolean }
     }>('/procedure/:name', {
       schema: {
         tags: ['Procedures'],
@@ -158,7 +226,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         security: authed,
         params: {
           type: 'object',
-          properties: { name: { type: 'string' } },
+          properties: { name: { type: 'string', maxLength: PROCEDURE_NAME_MAX_LENGTH } },
         },
         body: {
           type: 'object',
@@ -168,8 +236,22 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
             transitions: {
               type: 'array',
               maxItems: DEFINITION_LIMITS.maxTransitionStrings,
-              items: { type: 'string', maxLength: DEFINITION_LIMITS.maxTransitionLength },
-              description: 'Transition strings applied in order; chains allowed, e.g. ["start -> review", "review -approved-> end"].',
+              items: {
+                anyOf: [
+                  { type: 'string', maxLength: DEFINITION_LIMITS.maxTransitionLength },
+                  {
+                    type: 'object',
+                    required: ['transition', 'requires'],
+                    properties: {
+                      transition: { type: 'string', maxLength: DEFINITION_LIMITS.maxTransitionLength, description: 'One transition (not a chain).' },
+                      requires: requiresSchema,
+                    },
+                  },
+                ],
+              },
+              description: 'Transitions applied in order. Each entry is a transition string (chains allowed), e.g. "start -> review", '
+                + 'or an object { "transition": "review -approved-> end", "requires": ["pr_url"] } for a single transition that may only be taken '
+                + 'once those session-data keys have values.',
             },
             states: {
               type: 'object',
@@ -257,6 +339,63 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         }
       }
     )
+
+    app.put<{ Params: { name: string }; Body: { transition: string; requires: string[] } }>(
+      '/procedure/:name/transition/requires', {
+        schema: {
+          tags: ['Procedures'],
+          summary: 'Set the session data a transition requires',
+          description: 'Sets the session-data keys that must have a value before the named existing transition can be taken; an empty array '
+            + 'clears the requirement. `transition` names one transition exactly as it was added (no chains); 400 if no such transition exists.',
+          security: authed,
+          params: nameParams,
+          body: {
+            type: 'object',
+            required: ['transition', 'requires'],
+            properties: {
+              transition: { type: 'string', description: 'One existing transition, e.g. "review -approved-> merged".' },
+              requires: requiresSchema,
+            },
+          },
+          response: {
+            200: { $ref: 'WorkflowGraphWithWarnings#' },
+          },
+        } as any,
+      }, async (req, reply) => {
+        const owner = requestOwnerId(req)
+        const graph = await workflowStore.get(req.params.name, owner)
+        if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
+        let updated: WorkflowGraph
+        try {
+          updated = setTransitionRequires(graph, req.body.transition, req.body.requires)
+        } catch (e: any) {
+          return reply.code(400).send({ error: `${e.message} Nothing was changed.`, code: 'BAD_REQUEST' })
+        }
+        await workflowStore.save(updated, owner)
+        reply.send(withWarnings(updated))
+      }
+    )
+
+    app.get<{ Params: { name: string } }>('/procedure/:name/stats', {
+      schema: {
+        tags: ['Procedures'],
+        summary: 'Per-state statistics of a procedure\'s sessions',
+        description: `Aggregates the event logs of your sessions of this procedure (the newest ${STATS_MAX_SESSIONS}; \`truncated\` says whether there were more): `
+          + 'how often each state was entered, where sessions left to (by action), resets away from it and the mean time spent in it. '
+          + 'Use it to find the step where runs stall or backtrack. Sessions created before the event log existed count in the totals, '
+          + '`currentlyHere` and (from their history) `entered`, but not in exits or dwell times.',
+        security: authed,
+        params: nameParams,
+        response: { 200: statsResponse },
+      } as any,
+    }, async (req, reply) => {
+      const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
+      if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
+      const ownerIds = await sessionOwnerIdsForListing(req, apiKeyStore)
+      const sessions = await sessionStore.list(ownerIds, { workflowName: req.params.name, limit: STATS_MAX_SESSIONS + 1 })
+      const truncated = sessions.length > STATS_MAX_SESSIONS
+      reply.send(computeProcedureStats(graph.name, graph, sessions.slice(0, STATS_MAX_SESSIONS), truncated))
+    })
 
     app.delete<{ Params: { name: string }; Body: { transition: string } }>(
       '/procedure/:name/transition', {

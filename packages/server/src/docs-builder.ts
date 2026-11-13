@@ -47,7 +47,7 @@ export async function generateSpec(): Promise<object> {
   registerSharedSchemas(app)
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
-  app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
+  app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore, stores.apiKeyStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   await app.ready()
