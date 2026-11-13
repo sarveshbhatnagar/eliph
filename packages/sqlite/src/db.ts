@@ -11,7 +11,8 @@ export function openDb(path: string): Database.Database {
       label      TEXT NOT NULL,
       created_at TEXT NOT NULL,
       key_hash   TEXT NOT NULL,
-      key_limit  INTEGER NOT NULL DEFAULT 100
+      key_limit  INTEGER NOT NULL DEFAULT 100,
+      key_lookup TEXT
     );
 
     CREATE TABLE IF NOT EXISTS workflows (
@@ -49,7 +50,8 @@ export function openDb(path: string): Database.Database {
       label      TEXT NOT NULL,
       created_at TEXT NOT NULL,
       key_hash   TEXT NOT NULL,
-      org_key_id TEXT REFERENCES org_keys(id)
+      org_key_id TEXT REFERENCES org_keys(id),
+      key_lookup TEXT
     );
 
     CREATE TABLE IF NOT EXISTS usage_events (
@@ -68,5 +70,27 @@ export function openDb(path: string): Database.Database {
       ON usage_events(api_key_id, created_at);
   `)
 
+  migrateKeyLookup(db)
+
   return db
+}
+
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  return cols.some(c => c.name === column)
+}
+
+// Idempotent migration for databases created before key_lookup existed.
+// Legacy rows keep key_lookup = NULL and are backfilled lazily by find().
+function migrateKeyLookup(db: Database.Database): void {
+  for (const table of ['org_keys', 'api_keys']) {
+    if (!hasColumn(db, table, 'key_lookup')) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN key_lookup TEXT`)
+    }
+  }
+  // UNIQUE allows repeated NULLs, so legacy rows don't conflict
+  db.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_org_keys_lookup ON org_keys(key_lookup);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_lookup ON api_keys(key_lookup);
+  `)
 }
