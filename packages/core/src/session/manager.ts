@@ -1,5 +1,6 @@
 import { WorkflowGraph } from '../graph/types'
-import { Session } from './types'
+import { Session, SessionEvent } from './types'
+import { appendSessionEvent, mergeSessionData } from './data'
 import { getNextTransitions, sampleNext } from '../graph/engine'
 
 export function computeNextState(
@@ -58,10 +59,34 @@ export function computeNextState(
   throw new Error(`Cannot determine next state from "${session.currentState}"`)
 }
 
-export function applyAdvance(session: Session, newState: string): Session {
-  return { ...session, currentState: newState, history: [...session.history, newState] }
+/** Optional extras for an advance or reset: a data patch and a note for the event log. */
+export interface StepOptions {
+  action?: string
+  note?: string
+  data?: unknown
+  now?: Date
 }
 
-export function applyReset(session: Session, targetState: string): Session {
-  return { ...session, currentState: targetState, history: [...session.history, targetState] }
+function applyStep(session: Session, type: 'advance' | 'reset', newState: string, opts: StepOptions): Session {
+  const now = opts.now ?? new Date()
+  const event: SessionEvent = { type, from: session.currentState, to: newState, at: now.toISOString() }
+  if (opts.action !== undefined) event.action = opts.action
+  if (opts.note !== undefined) event.note = opts.note
+  const updated: Session = {
+    ...session,
+    currentState: newState,
+    history: [...session.history, newState],
+    updatedAt: now,
+    events: appendSessionEvent(session.events, event),
+  }
+  if (opts.data !== undefined) updated.data = mergeSessionData(session.data, opts.data)
+  return updated
+}
+
+export function applyAdvance(session: Session, newState: string, opts: StepOptions = {}): Session {
+  return applyStep(session, 'advance', newState, opts)
+}
+
+export function applyReset(session: Session, targetState: string, opts: Omit<StepOptions, 'action'> = {}): Session {
+  return applyStep(session, 'reset', targetState, opts)
 }

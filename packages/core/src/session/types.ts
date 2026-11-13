@@ -1,3 +1,15 @@
+export type SessionEventType = 'created' | 'advance' | 'reset' | 'data'
+
+/** One entry in a session's append-only event log. */
+export interface SessionEvent {
+  type: SessionEventType
+  from?: string
+  to?: string
+  action?: string
+  note?: string
+  at: string // ISO timestamp
+}
+
 export interface Session {
   id: string
   workflowName: string
@@ -5,6 +17,15 @@ export interface Session {
   currentState: string
   history: string[]
   createdAt: Date
+  /** Last modification time. Missing on sessions saved before it existed. */
+  updatedAt?: Date
+  /** Free-form data carried across conversations. Missing on old sessions = {}. */
+  data?: Record<string, unknown>
+  /**
+   * Append-only event log, capped at the most recent SESSION_EVENTS_MAX entries.
+   * Missing on old sessions = [].
+   */
+  events?: SessionEvent[]
 }
 
 export interface OrgKey {

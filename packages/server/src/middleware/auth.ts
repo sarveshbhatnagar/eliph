@@ -60,6 +60,27 @@ export async function canAccessSession(
   return !!ownerKey && ownerKey.orgKeyId === ctx.orgKeyId
 }
 
+/**
+ * Owner ids whose sessions the caller may list: the caller's org id, plus the
+ * ids of the org's API keys (legacy sessions were owned by the API key id; see
+ * canAccessSession). Admin lists the admin namespace only.
+ */
+export async function sessionOwnerIdsForListing(
+  req: Pick<FastifyRequest, 'authContext'>,
+  apiKeyStore: IApiKeyStore,
+): Promise<string[]> {
+  const ctx = req.authContext
+  if (!ctx) return []
+  if (ctx.type === 'admin') return [ADMIN_OWNER_ID]
+  const ids = new Set<string>()
+  if (ctx.orgKeyId) {
+    ids.add(ctx.orgKeyId)
+    for (const key of await apiKeyStore.list(ctx.orgKeyId)) ids.add(key.id)
+  }
+  if (ctx.type === 'api' && ctx.apiKeyId) ids.add(ctx.apiKeyId)
+  return [...ids]
+}
+
 export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeyStore) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.url === '/health') return

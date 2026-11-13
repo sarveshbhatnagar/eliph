@@ -154,3 +154,75 @@ describe('tool descriptions mention warnings', () => {
     expect(toolMeta[name].description).toContain('"warnings"')
   })
 })
+
+describe('session data, notes and listing', () => {
+  it('create_session keeps its old body and forwards optional data', async () => {
+    const { client, request } = fakeClient()
+    const s = makeSessionTools(client)
+    await s.create_session({ workflow_name: 'w' })
+    await s.create_session({ workflow_name: 'w', data: { a: { b: [1] } } })
+    expect(request.mock.calls).toEqual([
+      ['POST', '/session', { workflow: 'w' }],
+      ['POST', '/session', { workflow: 'w', data: { a: { b: [1] } } }],
+    ])
+  })
+
+  it('advance and reset_state forward data and note only when given', async () => {
+    const { client, request } = fakeClient()
+    const a = makeAdvanceTools(client)
+    await a.advance({ session_id: 'abc', completed_action: 'go', data: { k: 1 }, note: 'why' })
+    await a.reset_state({ session_id: 'abc', target_state: 'x', data: { k: null }, note: 'redo' })
+    await a.advance({ session_id: 'abc' })
+    expect(request.mock.calls).toEqual([
+      ['POST', '/session/abc/advance', { completed_action: 'go', data: { k: 1 }, note: 'why' }],
+      ['POST', '/session/abc/reset', { target_state: 'x', data: { k: null }, note: 'redo' }],
+      ['POST', '/session/abc/advance', { completed_action: undefined }],
+    ])
+  })
+
+  it('update_session_data PATCHes the encoded session path', async () => {
+    const { client, request } = fakeClient()
+    const s = makeSessionTools(client)
+    await s.update_session_data({ session_id: 'a b/c', data: { k: 1 } })
+    expect(request.mock.calls).toEqual([['PATCH', `/session/${encodeURIComponent('a b/c')}/data`, { data: { k: 1 } }]])
+  })
+
+  it('list_sessions builds an encoded query string from optional filters', async () => {
+    const { client, request } = fakeClient()
+    const s = makeSessionTools(client)
+    await s.list_sessions({})
+    await s.list_sessions({ workflow_name: 'my flow&x', active: true, limit: 10 })
+    await s.list_sessions({ active: false })
+    expect(request.mock.calls).toEqual([
+      ['GET', '/sessions'],
+      ['GET', '/sessions?workflow=my+flow%26x&active=true&limit=10'],
+      ['GET', '/sessions?active=false'],
+    ])
+  })
+
+  it('declares the new optional arguments and tools', () => {
+    for (const name of ['advance', 'reset_state']) {
+      const schema = toolMeta[name].inputSchema as any
+      expect(schema.required).toEqual(['session_id'])
+      expect(schema.properties.data).toEqual(expect.objectContaining({ type: 'object' }))
+      expect(schema.properties.note).toEqual(expect.objectContaining({ type: 'string', maxLength: 2000 }))
+    }
+    const create = toolMeta.create_session.inputSchema as any
+    expect(create.required).toEqual(['workflow_name'])
+    expect(create.properties.data).toEqual(expect.objectContaining({ type: 'object' }))
+    expect((toolMeta.update_session_data.inputSchema as any).required).toEqual(['session_id', 'data'])
+    const list = toolMeta.list_sessions.inputSchema as any
+    expect(list.required).toBeUndefined()
+    expect(Object.keys(list.properties)).toEqual(['workflow_name', 'active', 'limit'])
+  })
+
+  it.each(['create_session', 'advance', 'reset_state', 'current_state'])('%s description says the response has the step context', (name) => {
+    const d = toolMeta[name].description
+    expect(d).toContain('state description')
+    expect(d.toLowerCase()).toContain('next transitions')
+  })
+
+  it.each(['create_session', 'advance', 'reset_state', 'update_session_data'])('%s description explains session data', (name) => {
+    expect(toolMeta[name].description).toContain('later conversation')
+  })
+})

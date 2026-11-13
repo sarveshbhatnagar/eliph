@@ -1,4 +1,4 @@
-import { buildMcpServer } from '../src/index'
+import { buildMcpServer, toolMeta } from '../src/index'
 
 describe('MCP server', () => {
   it('registers all expected tools', () => {
@@ -18,5 +18,12 @@ describe('MCP server', () => {
     expect(toolNames).toContain('advance')
     expect(toolNames).toContain('reset_state')
     expect(toolNames).toContain('requirements')
+    expect(toolNames).toContain('update_session_data')
+    expect(toolNames).toContain('list_sessions')
+  })
+
+  it('has metadata for every registered tool', () => {
+    const server = buildMcpServer('https://eliph-api.revalent.ai', 'test-key')
+    for (const name of server.getToolNames()) expect(toolMeta[name]).toBeDefined()
   })
 })

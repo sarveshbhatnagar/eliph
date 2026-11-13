@@ -144,6 +144,37 @@ describe('InMemorySessionStore', () => {
   })
 })
 
+describe('InMemorySessionStore.list', () => {
+  function at(id: string, owner: string, iso: string, workflowName = 'test'): Session {
+    return { ...makeSession(id), workflowOwnerId: owner, workflowName, createdAt: new Date(iso) }
+  }
+
+  async function seeded() {
+    const store = new InMemorySessionStore()
+    await store.save(at('old', 'org', '2026-01-01T00:00:00.000Z'))
+    await store.save(at('new', 'org', '2026-01-03T00:00:00.000Z'))
+    await store.save(at('legacy', 'key-1', '2026-01-02T00:00:00.000Z', 'other'))
+    await store.save(at('foreign', 'other-org', '2026-01-04T00:00:00.000Z'))
+    return store
+  }
+
+  it('returns only the given owners, newest first', async () => {
+    const store = await seeded()
+    expect((await store.list(['org', 'key-1'])).map(s => s.id)).toEqual(['new', 'legacy', 'old'])
+  })
+
+  it('returns nothing for no owners', async () => {
+    expect(await (await seeded()).list([])).toEqual([])
+  })
+
+  it('filters by workflow name and pages with limit/offset', async () => {
+    const store = await seeded()
+    expect((await store.list(['org', 'key-1'], { workflowName: 'other' })).map(s => s.id)).toEqual(['legacy'])
+    expect((await store.list(['org', 'key-1'], { limit: 2 })).map(s => s.id)).toEqual(['new', 'legacy'])
+    expect((await store.list(['org', 'key-1'], { limit: 2, offset: 2 })).map(s => s.id)).toEqual(['old'])
+  })
+})
+
 describe('InMemoryApiKeyStore', () => {
   it('creates a key and finds it by raw value', async () => {
     const store = new InMemoryApiKeyStore()
