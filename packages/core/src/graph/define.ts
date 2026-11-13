@@ -1,5 +1,6 @@
 import { WorkflowGraph, State } from './types'
 import { addTransition } from './engine'
+import { validateRequires, withRequires } from './requires'
 
 export interface StateDefinition {
   /** What the agent should do / context for this state. */
@@ -8,16 +9,23 @@ export interface StateDefinition {
   terminal?: boolean
 }
 
+/**
+ * One entry of a definition's "transitions": a transition string (chains
+ * allowed), or a single transition with the session-data keys it requires.
+ */
+export type TransitionDefinition = string | { transition: string; requires: string[] }
+
 /** A whole workflow in one value: what PUT /procedure/:name and define_procedure accept. */
 export interface WorkflowDefinition {
   name: string
   description: string
-  /** Transition strings (chains allowed), applied in order with addTransition. */
-  transitions: string[]
+  /** Transition strings (chains allowed) or { transition, requires } objects, applied in order with addTransition. */
+  transitions: TransitionDefinition[]
   states?: Record<string, StateDefinition>
 }
 
 const STATE_KEYS = new Set(['description', 'terminal'])
+const TRANSITION_KEYS = new Set(['transition', 'requires'])
 
 /** Limits that keep one definition from tying up the (single-threaded) server. */
 export const DEFINITION_LIMITS = {
@@ -43,7 +51,7 @@ const hasOwn = (obj: object, key: string) => Object.prototype.hasOwnProperty.cal
 export function buildGraph(definition: WorkflowDefinition): WorkflowGraph {
   const { name, description, transitions, states } = definition
   if (!Array.isArray(transitions)) {
-    throw new Error('"transitions" must be an array of transition strings, e.g. ["start -> review -> end"]')
+    throw new Error('"transitions" must be an array of transition strings or { "transition", "requires" } objects, e.g. ["start -> review -> end"]')
   }
   if (transitions.length > DEFINITION_LIMITS.maxTransitionStrings) {
     throw new Error(
@@ -58,15 +66,14 @@ export function buildGraph(definition: WorkflowDefinition): WorkflowGraph {
     transitions: [],
   }
 
-  transitions.forEach((str, i) => {
-    if (typeof str !== 'string') {
-      throw new Error(`Transition #${i + 1} must be a string, got ${JSON.stringify(str)}`)
-    }
+  transitions.forEach((entry, i) => {
+    const { str, requires } = parseTransitionEntry(entry, i)
     if (str.length > DEFINITION_LIMITS.maxTransitionLength) {
       throw new Error(
         `Transition #${i + 1} is ${str.length} characters long; at most ${DEFINITION_LIMITS.maxTransitionLength} are allowed.`
       )
     }
+    const before = graph.transitions.length
     try {
       graph = addTransition(graph, str)
     } catch (e: any) {
@@ -77,6 +84,17 @@ export function buildGraph(definition: WorkflowDefinition): WorkflowGraph {
         `Transition #${i + 1} "${str}" brings the procedure to ${graph.transitions.length} transitions; ` +
         `at most ${DEFINITION_LIMITS.maxEdges} are allowed in one definition.`
       )
+    }
+    if (requires !== undefined) {
+      if (graph.transitions.length !== before + 1) {
+        throw new Error(
+          `Transition #${i + 1} "${str}" is a chain; "requires" can only be set on a single transition. ` +
+          'Split the chain into separate entries and put "requires" on the one transition that needs the data.'
+        )
+      }
+      const transitionsCopy = [...graph.transitions]
+      transitionsCopy[before] = withRequires(transitionsCopy[before], requires)
+      graph = { ...graph, transitions: transitionsCopy }
     }
   })
 
@@ -124,4 +142,34 @@ export function buildGraph(definition: WorkflowDefinition): WorkflowGraph {
   }
 
   return graph
+}
+
+/** The transition string and (validated) requires of one "transitions" entry. */
+function parseTransitionEntry(entry: unknown, i: number): { str: string; requires?: string[] } {
+  if (typeof entry === 'string') return { str: entry }
+  if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error(
+      `Transition #${i + 1} must be a string or an object like { "transition": "review -approved-> merged", "requires": ["pr_url"] }, ` +
+      `got ${JSON.stringify(entry)}`
+    )
+  }
+  const obj = entry as Record<string, unknown>
+  const unknown = Object.keys(obj).filter(k => !TRANSITION_KEYS.has(k))
+  if (unknown.length > 0) {
+    throw new Error(
+      `Transition #${i + 1} has unknown field(s) ${unknown.map(k => `"${k}"`).join(', ')}; ` +
+      'only "transition" and "requires" are allowed.'
+    )
+  }
+  if (typeof obj.transition !== 'string') {
+    throw new Error(`Transition #${i + 1}: "transition" must be a transition string, e.g. "review -approved-> merged"`)
+  }
+  if (!hasOwn(obj, 'requires')) {
+    throw new Error(`Transition #${i + 1} "${obj.transition}": the object form needs "requires" (an array of session-data keys); use a plain string otherwise.`)
+  }
+  try {
+    return { str: obj.transition, requires: validateRequires(obj.requires) }
+  } catch (e: any) {
+    throw new Error(`Transition #${i + 1} "${obj.transition}": ${e.message}`)
+  }
 }

@@ -1,13 +1,26 @@
-import { WorkflowGraph } from '../graph/types'
+import { Transition, WorkflowGraph } from '../graph/types'
 import { Session, SessionEvent } from './types'
 import { appendSessionEvent, mergeSessionData } from './data'
-import { getNextTransitions, sampleNext } from '../graph/engine'
+import { getNextTransitions, sampleTransition } from '../graph/engine'
 
 export function computeNextState(
   graph: WorkflowGraph,
   session: Session,
   completedAction?: string
 ): string {
+  return chooseTransition(graph, session, completedAction).to
+}
+
+/**
+ * The transition an advance takes from the session's current state (sampled
+ * for probabilistic exits). Throws with an agent-readable message when none can
+ * be taken.
+ */
+export function chooseTransition(
+  graph: WorkflowGraph,
+  session: Session,
+  completedAction?: string
+): Transition {
   const currentState = graph.states[session.currentState]
   if (currentState?.isTerminal) {
     throw new Error(
@@ -35,17 +48,17 @@ export function computeNextState(
         (deterministicPaths.length > 0 ? `Deterministic transitions (advance with no completed_action): ${deterministicPaths.join(', ')}.` : '')
       )
     }
-    return match.to
+    return match
   }
 
   const probabilistic = outgoing.filter(t => t.type === 'probabilistic')
   if (probabilistic.length > 0) {
-    return sampleNext(probabilistic)
+    return sampleTransition(probabilistic)
   }
 
   const deterministic = outgoing.filter(t => t.type === 'deterministic')
   if (deterministic.length === 1) {
-    return deterministic[0].to
+    return deterministic[0]
   }
 
   if (outgoing.some(t => t.type === 'symbolic')) {

@@ -6,6 +6,12 @@ export interface Transition {
   type: TransitionType
   weight?: number   // probabilistic only (0–1)
   action?: string   // symbolic only (e.g. "check_todo_done")
+  /**
+   * Session-data keys that must hold a value (not null, undefined or a blank
+   * string) before this transition can be taken. Missing on transitions
+   * without a requirement (and on graphs stored before it existed).
+   */
+  requires?: string[]
 }
 
 export interface State {

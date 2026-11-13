@@ -89,7 +89,8 @@ function formatWeight(n: number): string {
   return String(Number(n.toFixed(3)))
 }
 
-function describeTransition(t: Transition): string {
+/** A transition written the way it is added, e.g. "review -approved-> merged". */
+export function describeTransition(t: Transition): string {
   if (t.type === 'probabilistic') return `${t.from} -${t.weight}-> ${t.to}`
   if (t.type === 'symbolic') return `${t.from} -${t.action}-> ${t.to}`
   return `${t.from} -> ${t.to}`
@@ -227,7 +228,14 @@ function splitTransitionChain(chain: string): string[] {
   return results
 }
 
-export function removeTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
+/**
+ * Indexes of the edges a single transition string names ("a -x-> b", "a -> b",
+ * "a -.5-> b"). Only from, to, type, action and weight are compared, so other
+ * fields (e.g. requires) never stop a match. Legacy: labels that merely start
+ * with a number (e.g. "2fa_done") used to be stored as probabilistic edges with
+ * weight parseFloat(label); the original string still names such an edge.
+ */
+export function findTransitionIndexes(graph: WorkflowGraph, transitionStr: string): number[] {
   const target = parseSingleTransition(transitionStr, false)
   const matches = (t: Transition, want: Transition) =>
     t.from === want.from &&
@@ -235,20 +243,22 @@ export function removeTransition(graph: WorkflowGraph, transitionStr: string): W
     t.type === want.type &&
     t.action === want.action &&
     t.weight === want.weight
-  let transitions = graph.transitions.filter(t => !matches(t, target))
+  const indexesOf = (want: Transition) =>
+    graph.transitions.flatMap((t, i) => (matches(t, want) ? [i] : []))
 
-  // Legacy: labels that merely start with a number (e.g. "2fa_done") used to be
-  // stored as probabilistic edges with weight parseFloat(label). Let the
-  // original string still remove such an edge.
-  if (transitions.length === graph.transitions.length && target.type === 'symbolic') {
+  const found = indexesOf(target)
+  if (found.length === 0 && target.type === 'symbolic') {
     const legacyWeight = parseFloat(target.action ?? '')
     if (!isNaN(legacyWeight)) {
-      const legacy: Transition = { from: target.from, to: target.to, type: 'probabilistic', weight: legacyWeight }
-      transitions = graph.transitions.filter(t => !matches(t, legacy))
+      return indexesOf({ from: target.from, to: target.to, type: 'probabilistic', weight: legacyWeight })
     }
   }
+  return found
+}
 
-  return { ...graph, transitions }
+export function removeTransition(graph: WorkflowGraph, transitionStr: string): WorkflowGraph {
+  const remove = new Set(findTransitionIndexes(graph, transitionStr))
+  return { ...graph, transitions: graph.transitions.filter((_t, i) => !remove.has(i)) }
 }
 
 export function removeState(graph: WorkflowGraph, name: string): WorkflowGraph {
@@ -272,6 +282,11 @@ export function getNextTransitions(graph: WorkflowGraph, stateName: string): Tra
 }
 
 export function sampleNext(transitions: Transition[]): string {
+  return sampleTransition(transitions).to
+}
+
+/** Pick one of the (probabilistic) transitions at random by weight. */
+export function sampleTransition(transitions: Transition[]): Transition {
   if (transitions.length === 0) {
     throw new Error('Cannot sample from empty transitions array')
   }
@@ -279,9 +294,9 @@ export function sampleNext(transitions: Transition[]): string {
   let cumulative = 0
   for (const t of transitions) {
     cumulative += t.weight ?? 0
-    if (rand <= cumulative) return t.to
+    if (rand <= cumulative) return t
   }
-  return transitions[transitions.length - 1].to
+  return transitions[transitions.length - 1]
 }
 
 export function requirements(graph: WorkflowGraph, stateName: string): Requirement[] {

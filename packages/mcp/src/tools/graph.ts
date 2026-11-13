@@ -17,6 +17,12 @@ export function makeGraphTools(client: ApiClient) {
     update_state_description: async (args: { workflow_name: string; state_name: string; description: string }) =>
       client.request('PATCH', `/procedure/${encodeURIComponent(args.workflow_name)}/state/${encodeURIComponent(args.state_name)}`, { description: args.description }),
 
+    set_transition_requirements: async (args: { workflow_name: string; transition: string; requires: string[] }) =>
+      client.request('PUT', `/procedure/${encodeURIComponent(args.workflow_name)}/transition/requires`, {
+        transition: args.transition,
+        requires: args.requires,
+      }),
+
     mark_terminal: async (args: { workflow_name: string; state_name: string }) =>
       client.request('POST', `/procedure/${encodeURIComponent(args.workflow_name)}/state/${encodeURIComponent(args.state_name)}/terminal`),
   }
