@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
-import { IOrgKeyStore, IApiKeyStore } from '@eliph/core'
+import { IOrgKeyStore, IApiKeyStore, Session } from '@eliph/core'
 import jwt from 'jsonwebtoken'
 import { timingSafeEqual } from 'crypto'
 
@@ -24,6 +24,42 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * Owner namespace for the caller. Procedures and sessions are scoped to the org
+ * so all API keys in an org share one namespace and the org key (used by the
+ * dashboard) can manage them too. Admin uses its own namespace.
+ */
+export function requestOwnerId(req: Pick<FastifyRequest, 'authContext'>): string {
+  const ctx = req.authContext
+  if (ctx?.type === 'api') return ctx.orgKeyId
+  if (ctx?.type === 'org') return ctx.orgKeyId
+  return ADMIN_OWNER_ID
+}
+
+/**
+ * Whether the caller may read or modify a session.
+ * Allowed for admin, for callers in the org that owns the session, and for
+ * legacy sessions whose owner is an API key id (an earlier release stored the
+ * API key id as owner) when that key belongs to the caller's org.
+ */
+export async function canAccessSession(
+  req: Pick<FastifyRequest, 'authContext'>,
+  session: Pick<Session, 'workflowOwnerId'>,
+  apiKeyStore: IApiKeyStore,
+): Promise<boolean> {
+  const ctx = req.authContext
+  if (!ctx) return false
+  if (ctx.type === 'admin') return true
+  const owner = session.workflowOwnerId
+  if (owner === ctx.orgKeyId) return true
+  // Legacy: the session was created by this very API key
+  if (ctx.type === 'api' && owner === ctx.apiKeyId) return true
+  // Legacy: the session is owned by another API key in the caller's org
+  if (!ctx.orgKeyId || !owner) return false
+  const ownerKey = await apiKeyStore.findById(owner)
+  return !!ownerKey && ownerKey.orgKeyId === ctx.orgKeyId
+}
+
 export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeyStore) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     if (request.url === '/health') return
@@ -45,31 +81,37 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
       return
     }
 
+    // JWT (issued via OAuth /oauth/token). Verified before the org key lookup
+    // because verification is cheap and the org key lookup is a bcrypt scan.
+    const jwtSecret = process.env.JWT_SECRET
+    if (jwtSecret) {
+      let payload: { apiKeyId?: string } | null = null
+      try {
+        payload = jwt.verify(token, jwtSecret) as { apiKeyId?: string }
+      } catch {
+        // not a valid JWT — fall through to org key / raw API key checks
+      }
+      if (payload?.apiKeyId) {
+        const keyFromJwt = await apiKeyStore.findById(payload.apiKeyId)
+        if (!keyFromJwt) {
+          // The API key behind this token was revoked/deleted
+          return reply.code(401).send({ error: 'Invalid API key', code: 'UNAUTHORIZED' })
+        }
+        request.authContext = {
+          type: 'api',
+          apiKeyId: payload.apiKeyId,
+          apiKeyLabel: keyFromJwt.label,
+          orgKeyId: keyFromJwt.orgKeyId ?? '',
+        }
+        return
+      }
+    }
+
     // Org key
     const orgKey = await orgKeyStore.find(token)
     if (orgKey) {
       request.authContext = { type: 'org', orgKeyId: orgKey.id, keyLimit: orgKey.keyLimit }
       return
-    }
-
-    // JWT (issued via OAuth /oauth/token)
-    const jwtSecret = process.env.JWT_SECRET
-    if (jwtSecret) {
-      try {
-        const payload = jwt.verify(token, jwtSecret) as { apiKeyId: string }
-        if (payload?.apiKeyId) {
-          const keyFromJwt = await apiKeyStore.findById(payload.apiKeyId)
-          request.authContext = {
-            type: 'api',
-            apiKeyId: payload.apiKeyId,
-            apiKeyLabel: keyFromJwt?.label ?? '',
-            orgKeyId: keyFromJwt?.orgKeyId ?? '',
-          }
-          return
-        }
-      } catch {
-        // not a valid JWT — fall through to raw API key check
-      }
     }
 
     // Raw API key

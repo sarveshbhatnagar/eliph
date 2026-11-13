@@ -48,7 +48,7 @@ export async function generateSpec(): Promise<object> {
   app.register(keysRoutes(stores.orgKeyStore, stores.apiKeyStore))
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
-  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore))
+  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   await app.ready()
   return app.swagger()

@@ -1,17 +1,9 @@
-import { FastifyInstance, FastifyRequest } from 'fastify'
+import { FastifyInstance } from 'fastify'
 import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState, markStateTerminal } from '@eliph/core'
-import { ADMIN_OWNER_ID } from '../middleware/auth'
+import { requestOwnerId } from '../middleware/auth'
 
 const authed = [{ BearerAuth: [] }]
 
-function ownerId(req: FastifyRequest): string {
-  const ctx = req.authContext
-  // Scope procedures to the org so all API keys in an org share one namespace
-  // and the org key (used by the dashboard) can list/manage procedures too.
-  if (ctx?.type === 'api') return ctx.orgKeyId
-  if (ctx?.type === 'org') return ctx.orgKeyId
-  return ADMIN_OWNER_ID
-}
 
 export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
   return async (app: FastifyInstance) => {
@@ -39,7 +31,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       } as any,
     }, async (req, reply) => {
       const q = req.query.q ?? ''
-      reply.send(await workflowStore.search(q, ownerId(req)))
+      reply.send(await workflowStore.search(q, requestOwnerId(req)))
     })
 
     app.delete<{ Params: { name: string } }>('/procedure/:name', {
@@ -54,7 +46,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         response: { 204: { type: 'null' } },
       } as any,
     }, async (req, reply) => {
-      await workflowStore.delete(req.params.name, ownerId(req))
+      await workflowStore.delete(req.params.name, requestOwnerId(req))
       reply.code(204).send()
     })
 
@@ -75,7 +67,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         response: { 200: { $ref: 'WorkflowGraph#' } },
       } as any,
     }, async (req, reply) => {
-      const owner = ownerId(req)
+      const owner = requestOwnerId(req)
       const graph = await workflowStore.get(req.params.name, owner)
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       const updated = { ...graph, description: req.body.description }
@@ -97,7 +89,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         },
       } as any,
     }, async (req, reply) => {
-      const graph = await workflowStore.get(req.params.name, ownerId(req))
+      const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       reply.send(graph)
     })
@@ -127,7 +119,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         states: { start: { name: 'start', isTerminal: false } },
         transitions: [],
       }
-      await workflowStore.save(graph, ownerId(req))
+      await workflowStore.save(graph, requestOwnerId(req))
       reply.code(201).send(graph)
     })
 
@@ -151,7 +143,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const owner = ownerId(req)
+        const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
@@ -184,7 +176,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const owner = ownerId(req)
+        const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
@@ -215,10 +207,12 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         } as any,
       }, async (req, reply) => {
-        const owner = ownerId(req)
+        const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
-        const active = await sessionStore.findByState(req.params.name, req.params.state)
+        // findByState is not owner-scoped: only this owner's sessions block removal
+        const active = (await sessionStore.findByState(req.params.name, req.params.state))
+          .filter(s => s.workflowOwnerId === owner)
         if (active.length > 0) {
           return reply.code(409).send({ error: 'Active sessions exist in this state', code: 'CONFLICT' })
         }
@@ -250,7 +244,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           response: { 200: { $ref: 'WorkflowGraph#' } },
         } as any,
       }, async (req, reply) => {
-        const owner = ownerId(req)
+        const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         if (!graph.states[req.params.state]) {
@@ -281,7 +275,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           response: { 200: { $ref: 'WorkflowGraph#' } },
         } as any,
       }, async (req, reply) => {
-        const owner = ownerId(req)
+        const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         try {
@@ -308,7 +302,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         },
       } as any,
     }, async (req, reply) => {
-      const graph = await workflowStore.get(req.params.name, ownerId(req))
+      const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       reply.send(Object.values(graph.states))
     })

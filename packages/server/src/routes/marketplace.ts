@@ -1,13 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { IWorkflowStore } from '@eliph/core'
-import { MARKETPLACE_OWNER_ID, ADMIN_OWNER_ID } from '../middleware/auth'
+import { MARKETPLACE_OWNER_ID } from '../middleware/auth'
 
-function ownerId(req: any): string {
-  const ctx = req.authContext
-  if (ctx?.type === 'api') return ctx.orgKeyId
-  if (ctx?.type === 'org') return ctx.orgKeyId
-  return ADMIN_OWNER_ID
-}
 
 export function marketplaceRoutes(workflowStore: IWorkflowStore) {
   return async (app: FastifyInstance) => {
