@@ -68,6 +68,18 @@ describe('POST /marketplace/:name/copy', () => {
     expect((await stores.workflowStore.get('tpl', orgId))!.description).toBe('template')
   })
 
+  it('includes graph warnings in the response', async () => {
+    const { app, stores, rawKey } = await setup()
+    const clean = await app.inject({ method: 'POST', url: '/marketplace/tpl/copy', headers: json(rawKey), body: '{}' })
+    expect(clean.statusCode).toBe(201)
+    expect(clean.json().warnings).toEqual([])
+
+    await stores.workflowStore.save({ ...template, name: 'broken', transitions: [] }, MARKETPLACE_OWNER_ID)
+    const res = await app.inject({ method: 'POST', url: '/marketplace/broken/copy', headers: json(rawKey), body: '{}' })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().warnings.some((w: string) => w.includes('"start"') && w.includes('no outgoing transitions'))).toBe(true)
+  })
+
   it('returns 409 instead of overwriting an existing procedure', async () => {
     const { app, stores, rawKey, orgId } = await setup()
     await stores.workflowStore.save(existing, orgId)

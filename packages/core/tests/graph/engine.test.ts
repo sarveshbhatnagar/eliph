@@ -1,4 +1,4 @@
-import { parseTransition, validateGraph, graphWarnings, addTransition, removeTransition, removeState, getNextTransitions, sampleNext, requirements } from '../../src/graph/engine'
+import { parseTransition, validateGraph, graphWarnings, addTransition, removeTransition, removeState, markStateTerminal, getNextTransitions, sampleNext, requirements } from '../../src/graph/engine'
 import { Transition } from '../../src/graph/types'
 import { WorkflowGraph } from '../../src/graph/types'
 
@@ -497,5 +497,23 @@ describe('removeTransition legacy numeric-prefix edges', () => {
     expect(removeTransition(graph, 'a -2fa_done-> b').transitions).toEqual([
       { from: 'a', to: 'b', type: 'probabilistic', weight: 2 },
     ])
+  })
+})
+
+describe('reserved state names', () => {
+  const empty = { name: 'wf', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] }
+
+  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf'])(
+    'addTransition rejects "%s" as a state name and leaves the graph unchanged',
+    name => {
+      expect(() => addTransition(empty, `start -> ${name}`)).toThrow(/cannot be used as a state name/)
+      expect(() => addTransition(empty, `${name} -> start`)).toThrow(/cannot be used as a state name/)
+      expect(empty.transitions).toEqual([])
+    },
+  )
+
+  it('markStateTerminal and removeState do not treat inherited members as states', () => {
+    expect(() => markStateTerminal(empty, 'constructor')).toThrow(/does not exist/)
+    expect(() => removeState(empty, 'toString')).toThrow(/does not exist/)
   })
 })

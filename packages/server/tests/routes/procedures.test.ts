@@ -374,13 +374,19 @@ describe('graph warnings in procedure responses', () => {
     expect(warnings.some(w => w.includes('"start"') && w.includes('no outgoing transitions'))).toBe(true)
   })
 
-  it('does not add warnings to responses outside the slice', async () => {
+  it('POST /procedure returns warnings for the new, empty procedure', async () => {
     const { app, rawKey } = await setupFlow()
     const created = await app.inject({
       method: 'POST', url: '/procedure', headers: jsonHeaders(rawKey),
       body: JSON.stringify({ workflow_name: 'other', description: 'x' }),
     })
-    expect(created.json()).not.toHaveProperty('warnings')
+    expect(created.statusCode).toBe(201)
+    const warnings: string[] = created.json().warnings
+    expect(warnings.some(w => w.includes('No terminal state'))).toBe(true)
+  })
+
+  it('does not add warnings to responses outside the slice', async () => {
+    const { app, rawKey } = await setupFlow()
     const patched = await app.inject({
       method: 'PATCH', url: '/procedure/flow', headers: jsonHeaders(rawKey),
       body: JSON.stringify({ description: 'y' }),

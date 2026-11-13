@@ -13,6 +13,16 @@ const NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/
 /** Tolerance used when comparing sums of probabilistic weights against 1.0. */
 export const WEIGHT_TOLERANCE = 0.001
 
+/** True when the graph really has this state (ignores inherited object members such as "constructor"). */
+export function hasState(graph: Pick<WorkflowGraph, 'states'>, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(graph.states, name)
+}
+
+/** Names that collide with built-in object members (e.g. "__proto__", "constructor", "toString"). */
+export function isReservedStateName(name: string): boolean {
+  return name in Object.prototype
+}
+
 export function parseTransition(str: string): Transition {
   return parseSingleTransition(str, true)
 }
@@ -175,18 +185,20 @@ function addSingleTransition(graph: WorkflowGraph, transitionStr: string): Workf
   }
   const states: Record<string, State> = { ...graph.states }
 
-  if (!states[transition.from]) {
-    states[transition.from] = { name: transition.from, isTerminal: transition.from === 'end' }
-  }
-  if (!states[transition.to]) {
-    states[transition.to] = { name: transition.to, isTerminal: transition.to === 'end' }
+  for (const name of [transition.from, transition.to]) {
+    if (isReservedStateName(name)) {
+      throw new Error(`"${name}" cannot be used as a state name. Pick a different name.`)
+    }
+    if (!hasState({ states }, name)) {
+      states[name] = { name, isTerminal: name === 'end' }
+    }
   }
 
   return { ...graph, states, transitions: [...graph.transitions, transition] }
 }
 
 export function markStateTerminal(graph: WorkflowGraph, stateName: string): WorkflowGraph {
-  if (!graph.states[stateName]) {
+  if (!hasState(graph, stateName)) {
     throw new Error(`State "${stateName}" does not exist in workflow "${graph.name}"`)
   }
   return {
@@ -243,7 +255,7 @@ export function removeState(graph: WorkflowGraph, name: string): WorkflowGraph {
   if (name === 'start' || name === 'end') {
     throw new Error(`Cannot remove reserved state "${name}"`)
   }
-  if (!graph.states[name]) {
+  if (!hasState(graph, name)) {
     throw new Error(`State "${name}" does not exist`)
   }
   const states = { ...graph.states }

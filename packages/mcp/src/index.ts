@@ -32,8 +32,36 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
   create_procedure: {
-    description: 'Create a new eliph workflow procedure (state machine). A procedure defines a reusable multi-step process. After creating, use add_transition() to define the paths between states. Typical flow: create_procedure → add_transition → create_session. If a procedure with this name already exists, this fails with a CONFLICT error and nothing is changed: use the existing procedure (procedure(name)), pick another name, or pass overwrite: true to replace it (this discards its states and transitions).',
+    description: 'Create a new, empty eliph workflow procedure (state machine) with only a "start" state. To create a whole workflow (transitions, state descriptions, terminal states) in one atomic call, prefer define_procedure instead. After create_procedure, use add_transition() to define the paths between states. Typical flow: create_procedure → add_transition → create_session. If a procedure with this name already exists, this fails with a CONFLICT error and nothing is changed: use the existing procedure (procedure(name)), pick another name, or pass overwrite: true to replace it (this discards its states and transitions).',
     inputSchema: { type: 'object', required: ['workflow_name', 'description'], properties: { workflow_name: { type: 'string', description: 'Unique name for this workflow' }, description: { type: 'string', description: 'What this workflow does' }, overwrite: { type: 'boolean', description: 'Optional. Replace an existing procedure of the same name. Default false (an existing name is a CONFLICT error).' } } },
+  },
+  define_procedure: {
+    description: 'Create or replace a whole eliph workflow procedure in ONE atomic call: description, all transitions, state descriptions and terminal states. This is the preferred way to create a workflow or rewrite one completely; add_transition, remove_transition, update_state_description and mark_terminal remain for small incremental edits.\n' +
+      'transitions: transition strings applied in order, same syntax as add_transition ("A -> B" deterministic, "A -action-> B" symbolic, "A -.7-> B" probabilistic; chains like "A -> B -> C" allowed). The state "start" always exists; "end" is automatically terminal.\n' +
+      'states (optional): { "<state>": { "description": "what the agent should do here", "terminal": true } }. Every state named there must appear in a transition (or be "start"); an unknown name is rejected as a likely typo.\n' +
+      'Example: { "workflow_name": "code_review", "description": "Review and merge a pull request", "transitions": ["start -> reviewing", "reviewing -approved-> merged", "reviewing -changes_requested-> start"], "states": { "start": { "description": "Open the PR and summarise the change" }, "reviewing": { "description": "Read the diff; complete approved or changes_requested" }, "merged": { "description": "Merge and report the link", "terminal": true } } }\n' +
+      'The whole definition is validated before anything is saved: if any transition or state is invalid, the error names it and nothing changes. If a procedure with this name already exists this fails with CONFLICT unless overwrite: true; replacing is also refused (CONFLICT, listing the states) while any of your sessions is in a state the new definition removes. The response is the saved graph plus "warnings": advisory problems (probabilistic weights not summing to 1.0, ambiguous exits, dead ends, no reachable terminal state).',
+    inputSchema: {
+      type: 'object',
+      required: ['workflow_name', 'description', 'transitions'],
+      properties: {
+        workflow_name: { type: 'string', description: 'Unique name for this workflow' },
+        description: { type: 'string', description: 'What this workflow does' },
+        transitions: { type: 'array', items: { type: 'string' }, description: 'Transition strings applied in order, e.g. ["start -> review", "review -approved-> end"]' },
+        states: {
+          type: 'object',
+          description: 'Optional. Per-state settings keyed by state name.',
+          additionalProperties: {
+            type: 'object',
+            properties: {
+              description: { type: 'string', description: 'What the agent should do / context for this state' },
+              terminal: { type: 'boolean', description: 'Mark this state terminal (workflow complete)' },
+            },
+          },
+        },
+        overwrite: { type: 'boolean', description: 'Optional. Replace an existing procedure of the same name. Default false (an existing name is a CONFLICT error).' },
+      },
+    },
   },
   add_transition: {
     description: 'Add a transition between two states in a workflow procedure. Three formats supported:\n• "A -> B" — deterministic: advance() with no completed_action moves automatically to B\n• "A -action_name-> B" — symbolic: advance() requires completed_action: "action_name". Action names may contain hyphens ("A -tests-pass-> B") but not "->", and must not be a plain number.\n• "A -.7-> B" — probabilistic: the label is a number, the weight, which must be greater than 0 and at most 1. advance() samples randomly by weight. All probabilistic transitions from the same state should sum to exactly 1.0 (a transition that would push the sum above 1.0 is rejected). Example: "start -.7-> success" and "start -.3-> failure" — then advance() picks randomly with 70/30 odds. You cannot influence the outcome. Do not mix probabilistic exits with other kinds from the same state.\nChaining: "A -> B -> C" creates multiple transitions at once.\nNOTE: the state named "end" is automatically marked terminal. For other terminal states, use mark_terminal() after creating them. The response includes "warnings" for the whole graph: advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They do not block the edit, but fix them before running sessions.',
