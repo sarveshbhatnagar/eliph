@@ -49,6 +49,32 @@ export class SqliteSessionStore implements ISessionStore {
       )
   }
 
+  async saveIfRevision(session: Session, expectedRevision: number): Promise<boolean> {
+    // A single conditional UPDATE: SQLite runs it atomically, so two writers
+    // that read the same revision cannot both succeed. Rows written before
+    // revisions existed have none in their JSON and count as revision 0.
+    const result = this.db
+      .prepare(`
+        UPDATE sessions SET
+          workflow_name = ?,
+          current_state = ?,
+          updated_at    = ?,
+          data          = ?,
+          owner_id      = ?
+        WHERE id = ? AND COALESCE(json_extract(data, '$.revision'), 0) = ?
+      `)
+      .run(
+        session.workflowName,
+        session.currentState,
+        new Date().toISOString(),
+        JSON.stringify(session),
+        session.workflowOwnerId ?? null,
+        session.id,
+        expectedRevision,
+      )
+    return result.changes === 1
+  }
+
   async delete(id: string): Promise<void> {
     this.db.prepare('DELETE FROM sessions WHERE id = ?').run(id)
   }

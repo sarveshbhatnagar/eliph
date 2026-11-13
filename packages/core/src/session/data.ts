@@ -24,10 +24,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
-/** Throws if any key anywhere in the value could be used for prototype pollution. */
 /** Deepest nesting allowed in session data. */
 export const SESSION_DATA_MAX_DEPTH = 32
 
+/** Throws if any key anywhere in the value could be used for prototype pollution. */
 function assertSafeKeys(value: unknown, path: string, depth = 0): void {
   if (depth > SESSION_DATA_MAX_DEPTH) {
     throw new SessionDataError(
@@ -86,6 +86,11 @@ export function mergeSessionData(
 export function appendSessionEvent(events: SessionEvent[] | undefined, event: SessionEvent): SessionEvent[] {
   const next = [...(events ?? []), event]
   return next.length > SESSION_EVENTS_MAX ? next.slice(next.length - SESSION_EVENTS_MAX) : next
+}
+
+/** The revision a stored session is at (missing on old sessions = 0). */
+export function sessionRevision(session: Pick<Session, 'revision'>): number {
+  return session.revision ?? 0
 }
 
 /** Apply a data patch to a session without changing its state; records a 'data' event. */

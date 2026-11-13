@@ -1,3 +1,5 @@
+import { WorkflowGraph } from '../graph/types'
+
 export type SessionEventType = 'created' | 'advance' | 'reset' | 'data'
 
 /** One entry in a session's append-only event log. */
@@ -26,6 +28,17 @@ export interface Session {
    * Missing on old sessions = [].
    */
   events?: SessionEvent[]
+  /**
+   * Optimistic-concurrency counter, incremented on every write through the API.
+   * Missing on old sessions = 0.
+   */
+  revision?: number
+  /**
+   * Snapshot of the procedure graph taken when the session was created with
+   * pin: true. When present, the session runs against it instead of the live
+   * procedure. Missing on unpinned (and old) sessions.
+   */
+  pinnedGraph?: WorkflowGraph
 }
 
 export interface OrgKey {

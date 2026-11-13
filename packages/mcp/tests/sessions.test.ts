@@ -167,6 +167,27 @@ describe('session data, notes and listing', () => {
     ])
   })
 
+  it('create_session forwards pin only when given', async () => {
+    const { client, request } = fakeClient()
+    const s = makeSessionTools(client)
+    await s.create_session({ workflow_name: 'w', pin: true })
+    await s.create_session({ workflow_name: 'w', data: { a: 1 }, pin: false })
+    await s.create_session({ workflow_name: 'w', data: { a: 1 } })
+    expect(request.mock.calls).toEqual([
+      ['POST', '/session', { workflow: 'w', pin: true }],
+      ['POST', '/session', { workflow: 'w', data: { a: 1 }, pin: false }],
+      ['POST', '/session', { workflow: 'w', data: { a: 1 } }],
+    ])
+  })
+
+  it('create_session declares an optional pin argument explaining when to use it', () => {
+    const create = toolMeta.create_session.inputSchema as any
+    expect(create.required).toEqual(['workflow_name'])
+    expect(create.properties.pin).toEqual(expect.objectContaining({ type: 'boolean' }))
+    expect(create.properties.pin.description).toMatch(/long-running or audited/)
+    expect(create.properties.pin.description).toMatch(/live procedure/)
+  })
+
   it('advance and reset_state forward data and note only when given', async () => {
     const { client, request } = fakeClient()
     const a = makeAdvanceTools(client)

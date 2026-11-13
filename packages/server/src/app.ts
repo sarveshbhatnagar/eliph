@@ -109,6 +109,7 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     stateDescription: { type: 'string', nullable: true, description: 'Description of the current state (agent instructions), or null.' },
     isTerminal: { type: 'boolean', description: 'Whether the current state is terminal (workflow complete).' },
     nextTransitions: { type: 'array', items: { $ref: 'Transition#' }, description: 'Transitions available from the current state.' },
+    pinned: { type: 'boolean', description: 'Present and true when the session runs against a snapshot of its procedure taken at creation (pin: true); absent otherwise.' },
   }
   const sessionRequired = ['id', 'workflowName', 'currentState', 'history', 'createdAt']
 
