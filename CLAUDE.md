@@ -26,3 +26,14 @@ Workflow/state-machine procedure service: a Fastify REST API, an MCP server that
 - Use Relay (https://relay.revalent.ai/mcp) for tickets and logging (`create_ticket`, `workbook_add`, `finish_work` with the PR link). Do NOT call `start_work` from a cloud session: it creates a git worktree on the Mac mini, not in the cloud sandbox.
 - Production data and secrets live only on the Mac mini. Never commit `.env` files or secret values (this repo is public).
 - Dependencies are installed automatically on session start by `scripts/cloud-setup.sh`.
+
+## Autonomous PR loop
+
+No human reviews or merges PRs in this repo. Opening a PR is all an agent needs to do.
+
+- `.github/workflows/agent-review.yml` runs on every non-draft PR from a branch in this repo (never forks).
+- Claude reviews the diff, fixes blockers and CI failures itself, and pushes; CI and the review then run again (up to 4 rounds).
+- When the review passes and CI is green, the PR is squash-merged and the Mac mini deploys it within minutes.
+- Nits never block a merge; they are listed in the review comment.
+- A PR that cannot be shipped gets a comment explaining why and the `needs-attention` label.
+- Keep a PR as a draft while it is not ready to ship.
