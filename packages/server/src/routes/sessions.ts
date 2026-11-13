@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import {
   IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, computeNextState,
-  applyAdvance, applyReset, applyDataPatch, mergeSessionData, requirements, graphWarnings, SessionDataError, SESSION_NOTE_MAX_LENGTH,
+  applyAdvance, applyReset, applyDataPatch, mergeSessionData, requirements, graphWarnings, hasState, SessionDataError, SESSION_NOTE_MAX_LENGTH,
 } from '@eliph/core'
 import { randomUUID } from 'crypto'
 import { requestOwnerId, canAccessSession, sessionOwnerIdsForListing } from '../middleware/auth'
@@ -297,7 +297,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         const { session, graph } = loaded
         const body = req.body ?? {}
         const target = body.target_state ?? 'start'
-        if (!graph.states[target]) {
+        if (!hasState(graph, target)) {
           return reply.code(400).send({ error: `State "${target}" does not exist`, code: 'BAD_REQUEST' })
         }
         let updated: Session

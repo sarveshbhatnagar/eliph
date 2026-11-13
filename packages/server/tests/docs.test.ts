@@ -24,6 +24,18 @@ describe('generateSpec', () => {
     expect(paths).toContain('/session/{id}/requirements')
   })
 
+  it('documents PUT /procedure/{name} (define a whole procedure)', async () => {
+    const spec = await generateSpec() as any
+    const op = spec.paths['/procedure/{name}'].put
+    expect(op).toBeDefined()
+    expect(op.tags).toEqual(['Procedures'])
+    expect(op.summary).toBe('Define a whole procedure in one call')
+    expect(Object.keys(op.responses)).toEqual(expect.arrayContaining(['200', '201']))
+    const body = op.requestBody.content['application/json'].schema
+    expect(body.required).toEqual(['description', 'transitions'])
+    expect(Object.keys(body.properties)).toEqual(['description', 'transitions', 'states', 'overwrite'])
+  })
+
   it('includes all shared component schemas', async () => {
     const spec = await generateSpec() as any
     const schemas = Object.keys(spec.components.schemas)

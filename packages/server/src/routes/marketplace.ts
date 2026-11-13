@@ -1,7 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { IWorkflowStore } from '@eliph/core'
 import { MARKETPLACE_OWNER_ID } from '../middleware/auth'
-import { workflowExistsConflict, overwriteProperty } from './workflow-helpers'
+import { workflowExistsConflict, overwriteProperty, withWarnings } from './workflow-helpers'
 
 
 export function marketplaceRoutes(workflowStore: IWorkflowStore) {
@@ -62,7 +62,7 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
               overwrite: overwriteProperty,
             },
           },
-          response: { 201: { $ref: 'WorkflowGraph#' } },
+          response: { 201: { $ref: 'WorkflowGraphWithWarnings#' } },
         } as any,
       }, async (req, reply) => {
         const ctx = req.authContext
@@ -80,7 +80,7 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
           return reply.code(409).send(workflowExistsConflict(copied.name))
         }
         await workflowStore.save(copied, ctx.orgKeyId)
-        reply.code(201).send(copied)
+        reply.code(201).send(withWarnings(copied))
       }
     )
 

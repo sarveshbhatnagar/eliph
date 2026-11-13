@@ -7,6 +7,7 @@ describe('MCP server', () => {
     expect(toolNames).toContain('procedures')
     expect(toolNames).toContain('procedure')
     expect(toolNames).toContain('create_procedure')
+    expect(toolNames).toContain('define_procedure')
     expect(toolNames).toContain('add_transition')
     expect(toolNames).toContain('remove_transition')
     expect(toolNames).toContain('remove_state')

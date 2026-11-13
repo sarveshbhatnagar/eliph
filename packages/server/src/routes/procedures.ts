@@ -1,10 +1,24 @@
 import { FastifyInstance } from 'fastify'
-import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState, markStateTerminal } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, WorkflowGraph, StateDefinition, addTransition, removeTransition, removeState, markStateTerminal, buildGraph, hasState, DEFINITION_LIMITS } from '@eliph/core'
 import { requestOwnerId } from '../middleware/auth'
 import { withWarnings, workflowExistsConflict, overwriteProperty } from './workflow-helpers'
 
 const authed = [{ BearerAuth: [] }]
 
+
+/**
+ * States of `current` that `replacement` drops and that hold at least one of
+ * this owner's sessions. findByState is not owner-scoped, so filter by owner.
+ */
+async function strandedStates(sessionStore: ISessionStore, current: WorkflowGraph, replacement: WorkflowGraph, owner: string): Promise<string[]> {
+  const removed = Object.keys(current.states).filter(s => !Object.prototype.hasOwnProperty.call(replacement.states, s))
+  const stranded: string[] = []
+  for (const state of removed) {
+    const sessions = (await sessionStore.findByState(current.name, state)).filter(s => s.workflowOwnerId === owner)
+    if (sessions.length > 0) stranded.push(state)
+  }
+  return stranded
+}
 
 export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore) {
   return async (app: FastifyInstance) => {
@@ -110,7 +124,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           },
         },
         response: {
-          201: { $ref: 'WorkflowGraph#' },
+          201: { $ref: 'WorkflowGraphWithWarnings#' },
         },
       } as any,
     }, async (req, reply) => {
@@ -126,7 +140,89 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         transitions: [],
       }
       await workflowStore.save(graph, owner)
-      reply.code(201).send(graph)
+      reply.code(201).send(withWarnings(graph))
+    })
+
+    app.put<{
+      Params: { name: string }
+      Body: { description: string; transitions: string[]; states?: Record<string, StateDefinition>; overwrite?: boolean }
+    }>('/procedure/:name', {
+      schema: {
+        tags: ['Procedures'],
+        summary: 'Define a whole procedure in one call',
+        description:
+          'Creates (201) or, with overwrite: true, replaces (200) a procedure from its full definition. ' +
+          'Transitions are applied in order with the same rules as POST /procedure/:name/transition. ' +
+          'The whole graph is validated before anything is saved: on any error the response is 400 and nothing changes. ' +
+          'Replacing is refused (409) while any of your sessions is in a state the new definition removes.',
+        security: authed,
+        params: {
+          type: 'object',
+          properties: { name: { type: 'string' } },
+        },
+        body: {
+          type: 'object',
+          required: ['description', 'transitions'],
+          properties: {
+            description: { type: 'string' },
+            transitions: {
+              type: 'array',
+              maxItems: DEFINITION_LIMITS.maxTransitionStrings,
+              items: { type: 'string', maxLength: DEFINITION_LIMITS.maxTransitionLength },
+              description: 'Transition strings applied in order; chains allowed, e.g. ["start -> review", "review -approved-> end"].',
+            },
+            states: {
+              type: 'object',
+              maxProperties: DEFINITION_LIMITS.maxStates,
+              description: 'Optional per-state settings: { "<state>": { "description"?: string, "terminal"?: boolean } }. Every state named here must appear in a transition (or be "start").',
+              additionalProperties: {
+                type: 'object',
+                properties: {
+                  description: { type: 'string' },
+                  terminal: { type: 'boolean' },
+                },
+              },
+            },
+            overwrite: overwriteProperty,
+          },
+        },
+        response: {
+          200: { $ref: 'WorkflowGraphWithWarnings#' },
+          201: { $ref: 'WorkflowGraphWithWarnings#' },
+        },
+      } as any,
+    }, async (req, reply) => {
+      const name = req.params.name
+      const { description, transitions, states, overwrite } = req.body
+      const owner = requestOwnerId(req)
+
+      let graph: WorkflowGraph
+      try {
+        graph = buildGraph({ name, description, transitions, states })
+      } catch (e: any) {
+        return reply.code(400).send({ error: `${e.message} Nothing was saved.`, code: 'BAD_REQUEST' })
+      }
+
+      const existing = await workflowStore.get(name, owner)
+      if (existing && overwrite !== true) {
+        return reply.code(409).send(workflowExistsConflict(name, 'name'))
+      }
+      if (existing) {
+        const stranded = await strandedStates(sessionStore, existing, graph, owner)
+        if (stranded.length > 0) {
+          return reply.code(409).send({
+            error:
+              `Cannot replace procedure "${name}": active sessions are in states the new definition removes ` +
+              `(${stranded.map(s => `"${s}"`).join(', ')}). Nothing was changed. ` +
+              `Keep those states in the definition, or move/delete those sessions first.`,
+            code: 'CONFLICT',
+            states: stranded,
+          })
+        }
+      }
+
+      await workflowStore.save(graph, owner)
+      reply.code(existing ? 200 : 201).send(withWarnings(graph))
     })
 
     app.post<{ Params: { name: string }; Body: { transition: string } }>(
@@ -253,7 +349,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         const owner = requestOwnerId(req)
         const graph = await workflowStore.get(req.params.name, owner)
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
-        if (!graph.states[req.params.state]) {
+        if (!hasState(graph, req.params.state)) {
           return reply.code(404).send({ error: `State "${req.params.state}" does not exist`, code: 'NOT_FOUND' })
         }
         const updated = {

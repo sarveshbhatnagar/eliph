@@ -24,6 +24,20 @@ export function makeProcedureTools(client: ApiClient) {
         ...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
       }),
 
+    define_procedure: async (args: {
+      workflow_name: string
+      description: string
+      transitions: string[]
+      states?: Record<string, { description?: string; terminal?: boolean }>
+      overwrite?: boolean
+    }) =>
+      client.request('PUT', `/procedure/${encodeURIComponent(args.workflow_name)}`, {
+        description: args.description,
+        transitions: args.transitions,
+        ...(args.states !== undefined ? { states: args.states } : {}),
+        ...(args.overwrite !== undefined ? { overwrite: args.overwrite } : {}),
+      }),
+
     update_description: async (args: { workflow_name: string; description: string }) =>
       client.request('PATCH', `/procedure/${encodeURIComponent(args.workflow_name)}`, { description: args.description }),
 
