@@ -17,6 +17,12 @@ export interface Stores {
   usageStore: IUsageStore
 }
 
+const warningsSchema = {
+  type: 'array',
+  items: { type: 'string' },
+  description: 'Advisory, human-readable problems with the workflow graph (e.g. weights not summing to 1.0, ambiguous exits, no reachable terminal state). Edits are not rejected because of them.',
+}
+
 export function registerSharedSchemas(app: FastifyInstance): void {
   app.addSchema({
     $id: 'State',
@@ -42,35 +48,57 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     required: ['from', 'to', 'type'],
   })
 
+  const workflowGraphProperties = {
+    name: { type: 'string' },
+    description: { type: 'string' },
+    states: {
+      type: 'object',
+      additionalProperties: { $ref: 'State#' },
+    },
+    transitions: {
+      type: 'array',
+      items: { $ref: 'Transition#' },
+    },
+  }
+  const workflowGraphRequired = ['name', 'description', 'states', 'transitions']
+
   app.addSchema({
     $id: 'WorkflowGraph',
     type: 'object',
-    properties: {
-      name: { type: 'string' },
-      description: { type: 'string' },
-      states: {
-        type: 'object',
-        additionalProperties: { $ref: 'State#' },
-      },
-      transitions: {
-        type: 'array',
-        items: { $ref: 'Transition#' },
-      },
-    },
-    required: ['name', 'description', 'states', 'transitions'],
+    properties: workflowGraphProperties,
+    required: workflowGraphRequired,
   })
+
+  // WorkflowGraph plus advisory warnings (see graphWarnings in @eliph/core)
+  app.addSchema({
+    $id: 'WorkflowGraphWithWarnings',
+    type: 'object',
+    properties: { ...workflowGraphProperties, warnings: warningsSchema },
+    required: workflowGraphRequired,
+  })
+
+  const sessionProperties = {
+    id: { type: 'string' },
+    workflowName: { type: 'string' },
+    currentState: { type: 'string' },
+    history: { type: 'array', items: { type: 'string' } },
+    createdAt: { type: 'string', format: 'date-time' },
+  }
+  const sessionRequired = ['id', 'workflowName', 'currentState', 'history', 'createdAt']
 
   app.addSchema({
     $id: 'Session',
     type: 'object',
-    properties: {
-      id: { type: 'string' },
-      workflowName: { type: 'string' },
-      currentState: { type: 'string' },
-      history: { type: 'array', items: { type: 'string' } },
-      createdAt: { type: 'string', format: 'date-time' },
-    },
-    required: ['id', 'workflowName', 'currentState', 'history', 'createdAt'],
+    properties: sessionProperties,
+    required: sessionRequired,
+  })
+
+  // Session plus advisory warnings about its workflow graph
+  app.addSchema({
+    $id: 'SessionWithWarnings',
+    type: 'object',
+    properties: { ...sessionProperties, warnings: warningsSchema },
+    required: sessionRequired,
   })
 
   app.addSchema({

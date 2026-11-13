@@ -56,6 +56,37 @@ describe('POST /session', () => {
     expect(body.id).toBeDefined()
   })
 
+  it('returns an empty warnings array for a well-formed workflow', async () => {
+    const { app, rawKey } = await makeAuthedApp()
+    const res = await app.inject({
+      method: 'POST', url: '/session',
+      headers: { ...authed(rawKey), 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'flow' }),
+    })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().warnings).toEqual([])
+  })
+
+  it('still creates the session but returns warnings for a problematic workflow', async () => {
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    await stores.workflowStore.save({
+      name: 'broken', description: '',
+      states: { start: { name: 'start', isTerminal: false }, a: { name: 'a', isTerminal: false } },
+      transitions: [{ from: 'start', to: 'a', type: 'deterministic' }],
+    }, apiKeyId)
+    const res = await app.inject({
+      method: 'POST', url: '/session',
+      headers: { ...authed(rawKey), 'content-type': 'application/json' },
+      body: JSON.stringify({ workflow: 'broken' }),
+    })
+    expect(res.statusCode).toBe(201)
+    const body = res.json()
+    expect(body.currentState).toBe('start')
+    expect(await stores.sessionStore.get(body.id)).not.toBeNull()
+    expect(body.warnings.some((w: string) => w.includes('"a"') && w.includes('no outgoing transitions'))).toBe(true)
+    expect(body.warnings.some((w: string) => w.includes('No terminal state'))).toBe(true)
+  })
+
   it('returns 404 for unknown workflow', async () => {
     const { app, rawKey } = await makeAuthedApp()
     const res = await app.inject({
@@ -313,12 +344,18 @@ describe('session access control', () => {
     expect(s!.history).toEqual(['start'])
   })
 
-  it('denies cross-org delete with 404 and keeps the session', async () => {
+  it('cross-org delete answers 204 like a nonexistent id but keeps the session', async () => {
     const { app, stores, otherRawKey } = await setupTwoOrgs()
     const res = await app.inject({ method: 'DELETE', url: '/session/s1', headers: authed(otherRawKey) })
-    expect(res.statusCode).toBe(404)
-    expect(res.json()).toEqual({ error: 'Not found', code: 'NOT_FOUND' })
-    expect(await stores.sessionStore.get('s1')).not.toBeNull()
+    const missing = await app.inject({ method: 'DELETE', url: '/session/never-existed', headers: authed(otherRawKey) })
+    expect(res.statusCode).toBe(204)
+    expect(res.body).toBe('')
+    // Indistinguishable from deleting an id that does not exist
+    expect(missing.statusCode).toBe(res.statusCode)
+    expect(missing.body).toBe(res.body)
+    const s = await stores.sessionStore.get('s1')
+    expect(s).not.toBeNull()
+    expect(s!.currentState).toBe('start')
   })
 
   it('deleting a nonexistent session stays 204', async () => {
@@ -381,11 +418,12 @@ describe('session access control', () => {
     })
 
     it('is denied for a key in another org', async () => {
-      const { app, otherRawKey } = await setupLegacy()
+      const { app, stores, otherRawKey } = await setupLegacy()
       const res = await app.inject({ method: 'GET', url: '/session/legacy/state', headers: authed(otherRawKey) })
       expect(res.statusCode).toBe(404)
       const del = await app.inject({ method: 'DELETE', url: '/session/legacy', headers: authed(otherRawKey) })
-      expect(del.statusCode).toBe(404)
+      expect(del.statusCode).toBe(204)
+      expect(await stores.sessionStore.get('legacy')).not.toBeNull()
     })
   })
 })

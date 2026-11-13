@@ -1,5 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
-import { IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, computeNextState, applyAdvance, applyReset, requirements, graphWarnings } from '@eliph/core'
 import { randomUUID } from 'crypto'
 import { requestOwnerId, canAccessSession } from '../middleware/auth'
 
@@ -77,7 +77,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           properties: { workflow: { type: 'string' } },
         },
         response: {
-          201: { $ref: 'Session#' },
+          201: { $ref: 'SessionWithWarnings#' },
         },
       } as any,
     }, async (req, reply) => {
@@ -94,7 +94,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
       }
       await sessionStore.save(session)
       recordUsage(req, usageStore, 'session_created')
-      reply.code(201).send(session)
+      reply.code(201).send({ ...session, warnings: graphWarnings(graph) })
     })
 
     app.delete<{ Params: { id: string } }>('/session/:id', {
@@ -103,21 +103,16 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         summary: 'Delete a session',
         security: authed,
         params: idParams,
-        response: {
-          204: { type: 'null' },
-          404: {
-            type: 'object',
-            properties: { error: { type: 'string' }, code: { type: 'string' } },
-          },
-        },
+        response: { 204: { type: 'null' } },
       } as any,
     }, async (req, reply) => {
       const session = await sessionStore.get(req.params.id)
-      // Deleting a nonexistent session is idempotent; an inaccessible one is 404
-      if (session && !(await canAccessSession(req, session, apiKeyStore))) {
-        return reply.code(404).send(NOT_FOUND)
+      // Deleting is idempotent: a nonexistent session and one the caller may not
+      // access both answer 204, so the response never reveals that an id exists.
+      // An inaccessible session is left untouched.
+      if (session && await canAccessSession(req, session, apiKeyStore)) {
+        await sessionStore.delete(req.params.id)
       }
-      if (session) await sessionStore.delete(req.params.id)
       reply.code(204).send()
     })
 

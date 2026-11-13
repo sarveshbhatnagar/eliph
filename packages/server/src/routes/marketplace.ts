@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { IWorkflowStore } from '@eliph/core'
 import { MARKETPLACE_OWNER_ID } from '../middleware/auth'
+import { workflowExistsConflict, overwriteProperty } from './workflow-helpers'
 
 
 export function marketplaceRoutes(workflowStore: IWorkflowStore) {
@@ -47,7 +48,7 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
     })
 
     // POST /marketplace/:name/copy — copy template into caller's namespace
-    app.post<{ Params: { name: string }; Body: { workflow_name?: string } }>(
+    app.post<{ Params: { name: string }; Body: { workflow_name?: string; overwrite?: boolean } }>(
       '/marketplace/:name/copy', {
         schema: {
           tags: ['Marketplace'],
@@ -56,7 +57,10 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
           params: { type: 'object', properties: { name: { type: 'string' } } },
           body: {
             type: 'object',
-            properties: { workflow_name: { type: 'string', description: 'Optional new name (defaults to template name)' } },
+            properties: {
+              workflow_name: { type: 'string', description: 'Optional new name (defaults to template name)' },
+              overwrite: overwriteProperty,
+            },
           },
           response: { 201: { $ref: 'WorkflowGraph#' } },
         } as any,
@@ -72,13 +76,16 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
           ...template,
           name: req.body?.workflow_name ?? template.name,
         }
+        if (req.body?.overwrite !== true && await workflowStore.get(copied.name, ctx.orgKeyId)) {
+          return reply.code(409).send(workflowExistsConflict(copied.name))
+        }
         await workflowStore.save(copied, ctx.orgKeyId)
         reply.code(201).send(copied)
       }
     )
 
     // POST /admin/marketplace — publish a workflow as a marketplace template
-    app.post<{ Body: { workflow_name: string; description: string } }>(
+    app.post<{ Body: { workflow_name: string; description: string; overwrite?: boolean } }>(
       '/admin/marketplace', {
         schema: {
           tags: ['Marketplace'],
@@ -90,6 +97,7 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
             properties: {
               workflow_name: { type: 'string' },
               description: { type: 'string' },
+              overwrite: overwriteProperty,
             },
           },
           response: { 201: { $ref: 'WorkflowGraph#' } },
@@ -97,6 +105,9 @@ export function marketplaceRoutes(workflowStore: IWorkflowStore) {
       }, async (req, reply) => {
         if (req.authContext?.type !== 'admin') {
           return reply.code(403).send({ error: 'Admin access required', code: 'FORBIDDEN' })
+        }
+        if (req.body.overwrite !== true && await workflowStore.get(req.body.workflow_name, MARKETPLACE_OWNER_ID)) {
+          return reply.code(409).send(workflowExistsConflict(req.body.workflow_name))
         }
         const graph = {
           name: req.body.workflow_name,

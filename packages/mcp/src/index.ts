@@ -12,15 +12,15 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term' } } },
   },
   copy_from_marketplace: {
-    description: 'Copy a marketplace workflow template into your own namespace. The template is copied with all its states, transitions, and state descriptions intact — ready to use immediately or customise. Optionally rename it with workflow_name.',
-    inputSchema: { type: 'object', required: ['template_name'], properties: { template_name: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional new name (defaults to template name)' } } },
+    description: 'Copy a marketplace workflow template into your own namespace. The template is copied with all its states, transitions, and state descriptions intact — ready to use immediately or customise. Optionally rename it with workflow_name. If you already have a procedure with that name, the copy fails with a CONFLICT error and nothing is changed: use your existing procedure, pass a different workflow_name, or pass overwrite: true to replace it (this discards its states and transitions).',
+    inputSchema: { type: 'object', required: ['template_name'], properties: { template_name: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional new name (defaults to template name)' }, overwrite: { type: 'boolean', description: 'Optional. Replace an existing procedure of the same name. Default false (an existing name is a CONFLICT error).' } } },
   },
   procedures: {
     description: 'Search eliph for available workflow procedures. Returns { name, description }[] so you can understand what each workflow does without extra calls. Call with no query to list everything, or pass a term to filter by name or description. Use the description to decide which procedure fits the current task, then call procedure(name) to get the full state/transition graph.',
     inputSchema: { type: 'object', properties: { search_query: { type: 'string', description: 'Optional search term — filters by name or description substring' } } },
   },
   procedure: {
-    description: 'Get the full definition of a single eliph workflow procedure — its states, transitions, and description. Use this to understand what a workflow does and what paths are available before creating a session.',
+    description: 'Get the full definition of a single eliph workflow procedure — its states, transitions, and description. Use this to understand what a workflow does and what paths are available before creating a session. The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). Fix them before running sessions.',
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
   update_description: {
@@ -32,19 +32,19 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
   create_procedure: {
-    description: 'Create a new eliph workflow procedure (state machine). A procedure defines a reusable multi-step process. After creating, use add_transition() to define the paths between states. Typical flow: create_procedure → add_transition → create_session.',
-    inputSchema: { type: 'object', required: ['workflow_name', 'description'], properties: { workflow_name: { type: 'string', description: 'Unique name for this workflow' }, description: { type: 'string', description: 'What this workflow does' } } },
+    description: 'Create a new eliph workflow procedure (state machine). A procedure defines a reusable multi-step process. After creating, use add_transition() to define the paths between states. Typical flow: create_procedure → add_transition → create_session. If a procedure with this name already exists, this fails with a CONFLICT error and nothing is changed: use the existing procedure (procedure(name)), pick another name, or pass overwrite: true to replace it (this discards its states and transitions).',
+    inputSchema: { type: 'object', required: ['workflow_name', 'description'], properties: { workflow_name: { type: 'string', description: 'Unique name for this workflow' }, description: { type: 'string', description: 'What this workflow does' }, overwrite: { type: 'boolean', description: 'Optional. Replace an existing procedure of the same name. Default false (an existing name is a CONFLICT error).' } } },
   },
   add_transition: {
-    description: 'Add a transition between two states in a workflow procedure. Three formats supported:\n• "A -> B" — deterministic: advance() with no completed_action moves automatically to B\n• "A -action_name-> B" — symbolic: advance() requires completed_action: "action_name"\n• "A -.7-> B" — probabilistic: advance() samples randomly by weight (0–1). All probabilistic transitions from the same state MUST sum to exactly 1.0 or the workflow is invalid. Example: "start -.7-> success" and "start -.3-> failure" — then advance() picks randomly with 70/30 odds. You cannot influence the outcome.\nChaining: "A -> B -> C" creates multiple transitions at once.\nNOTE: the state named "end" is automatically marked terminal. For other terminal states, use mark_terminal() after creating them.',
+    description: 'Add a transition between two states in a workflow procedure. Three formats supported:\n• "A -> B" — deterministic: advance() with no completed_action moves automatically to B\n• "A -action_name-> B" — symbolic: advance() requires completed_action: "action_name". Action names may contain hyphens ("A -tests-pass-> B") but not "->", and must not be a plain number.\n• "A -.7-> B" — probabilistic: the label is a number, the weight, which must be greater than 0 and at most 1. advance() samples randomly by weight. All probabilistic transitions from the same state should sum to exactly 1.0 (a transition that would push the sum above 1.0 is rejected). Example: "start -.7-> success" and "start -.3-> failure" — then advance() picks randomly with 70/30 odds. You cannot influence the outcome. Do not mix probabilistic exits with other kinds from the same state.\nChaining: "A -> B -> C" creates multiple transitions at once.\nNOTE: the state named "end" is automatically marked terminal. For other terminal states, use mark_terminal() after creating them. The response includes "warnings" for the whole graph: advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They do not block the edit, but fix them before running sessions.',
     inputSchema: { type: 'object', required: ['workflow_name', 'transition'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string', description: 'e.g. "start -> review", "review -approved-> done", "start -.7-> pass -> end"' } } },
   },
   remove_transition: {
-    description: 'Remove an existing transition from a workflow procedure. Use the same format as add_transition: "from_state -> to_state".',
+    description: 'Remove an existing transition from a workflow procedure. Use the same format as add_transition: "from_state -> to_state". The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They are advisory only.',
     inputSchema: { type: 'object', required: ['workflow_name', 'transition'], properties: { workflow_name: { type: 'string' }, transition: { type: 'string' } } },
   },
   remove_state: {
-    description: 'Remove a state and all its transitions from a workflow procedure. Will fail if any active sessions are currently in that state.',
+    description: 'Remove a state and all its transitions from a workflow procedure. Will fail if any active sessions are currently in that state. The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They are advisory only.',
     inputSchema: { type: 'object', required: ['workflow_name', 'state_name'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' } } },
   },
   list_states: {
@@ -56,11 +56,11 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['workflow_name', 'state_name', 'description'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' }, description: { type: 'string', description: 'What the agent should do / context for this state' } } },
   },
   mark_terminal: {
-    description: 'Mark a state as terminal — sessions in this state cannot advance further and the workflow is considered complete. The state named "end" is auto-marked terminal. Use this for other logical end states (e.g. "approved", "rejected", "good_to_buy"). Call this after creating the state via add_transition.',
+    description: 'Mark a state as terminal — sessions in this state cannot advance further and the workflow is considered complete. The state named "end" is auto-marked terminal. Use this for other logical end states (e.g. "approved", "rejected", "good_to_buy"). Call this after creating the state via add_transition. The response includes "warnings": advisory problems with the graph (probabilistic weights not summing to 1.0, a state with several deterministic exits, a state mixing probabilistic and other exits, a non-terminal dead end, no reachable terminal state). They are advisory only.',
     inputSchema: { type: 'object', required: ['workflow_name', 'state_name'], properties: { workflow_name: { type: 'string' }, state_name: { type: 'string' } } },
   },
   create_session: {
-    description: 'Start a new eliph session — a single live instance of a workflow procedure running through its states. Every session starts at the "start" state. Returns a session_id you must keep to call advance(), next_transitions(), etc. Use this when beginning a new instance of a process (e.g. a new approval request, a new onboarding run).',
+    description: 'Start a new eliph session — a single live instance of a workflow procedure running through its states. Every session starts at the "start" state. Returns a session_id you must keep to call advance(), next_transitions(), etc. Use this when beginning a new instance of a process (e.g. a new approval request, a new onboarding run). The response includes "warnings" about the workflow graph (e.g. ambiguous exits, dead ends, weights not summing to 1.0, no reachable terminal state); the session is still created, but such problems can make advance() fail later.',
     inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' } } },
   },
   delete_session: {
