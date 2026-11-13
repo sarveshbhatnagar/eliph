@@ -111,7 +111,7 @@ export function buildApp(stores: Stores): FastifyInstance {
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(marketplaceRoutes(stores.workflowStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore))
-  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore))
+  app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   app.setErrorHandler((error, _req, reply) => {
     const status = (error as any).statusCode ?? 500

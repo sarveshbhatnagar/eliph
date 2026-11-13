@@ -151,3 +151,18 @@ describe('GET /procedure/:name/states', () => {
     expect(body.map((s: any) => s.name)).toContain('review')
   })
 })
+
+describe('DELETE /procedure/:name/state/:state owner scoping', () => {
+  it('ignores sessions of another org on a same-named workflow', async () => {
+    const { app, stores, rawKey, apiKeyId } = await makeAuthedApp()
+    const { addTransition } = await import('@eliph/core')
+    let graph = { name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] as any[] }
+    graph = addTransition(graph as any, 'start -> review') as any
+    await stores.workflowStore.save(graph as any, apiKeyId)
+    await stores.workflowStore.save(graph as any, 'other-org')
+    await stores.sessionStore.save({ id: 'foreign', workflowName: 'flow', workflowOwnerId: 'other-org', currentState: 'review', history: ['start', 'review'], createdAt: new Date() })
+    const res = await app.inject({ method: 'DELETE', url: '/procedure/flow/state/review', headers: authed(rawKey) })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().states.review).toBeUndefined()
+  })
+})

@@ -68,24 +68,24 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' } } },
   },
   current_state: {
-    description: 'Get the current state and full history of an eliph session. The response includes the state description — agent instructions for what to do in this state. Always read the state description to know what actions or decisions are expected here.',
-    inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
+    description: 'Get the current state, workflow name and full history of an eliph session. Only session_id is needed. The response includes the state description — agent instructions for what to do in this state. Always read the state description to know what actions or decisions are expected here.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
   next_transitions: {
-    description: 'List the transitions available from the current state. Each result includes an "advance_with" field telling you exactly what to pass to advance(). For symbolic transitions this is { completed_action: "action_name" }; for deterministic it says to call advance() with no argument.',
-    inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
+    description: 'List the transitions available from the current state of a session (only session_id is needed). Each result includes an "advance_with" field telling you exactly what to pass to advance(). For symbolic transitions this is { completed_action: "action_name" }; for deterministic it says to call advance() with no argument.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
   advance: {
-    description: 'Advance an eliph session to the next state. Call next_transitions() first to see what is available. If a transition requires a completed_action, pass it here. This is the core operation for driving a workflow forward step by step.',
-    inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' }, completed_action: { type: 'string', description: 'The action that was completed to enable this transition (if required)' } } },
+    description: 'Advance an eliph session to the next state (only session_id is needed; workflow_name is optional). Call next_transitions() first to see what is available. If a transition requires a completed_action, pass it here. This is the core operation for driving a workflow forward step by step.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, completed_action: { type: 'string', description: 'The action that was completed to enable this transition (if required)' } } },
   },
   reset_state: {
-    description: 'Reset an eliph session back to a previous state (defaults to "start"). Use this to restart a workflow from the beginning or roll back to a specific state after an error or rejection.',
-    inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' }, target_state: { type: 'string', description: 'State to reset to (default: start)' } } },
+    description: 'Reset an eliph session back to a previous state (defaults to "start"). Only session_id is needed. Use this to restart a workflow from the beginning or roll back to a specific state after an error or rejection.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, target_state: { type: 'string', description: 'State to reset to (default: start)' } } },
   },
   requirements: {
-    description: 'Returns the symbolic action names required to leave the current state — i.e. the completed_action values you can pass to advance(). Returns [] if all outgoing transitions are deterministic (no action needed). This is a shorthand for next_transitions filtered to symbolic-only; prefer next_transitions for full context.',
-    inputSchema: { type: 'object', required: ['session_id', 'workflow_name'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string' } } },
+    description: 'Returns the symbolic action names required to leave the session\'s current state (only session_id is needed) — i.e. the completed_action values you can pass to advance(). Returns [] if all outgoing transitions are deterministic (no action needed). This is a shorthand for next_transitions filtered to symbolic-only; prefer next_transitions for full context.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
 }
 
