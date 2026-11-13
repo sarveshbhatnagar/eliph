@@ -82,7 +82,7 @@ export function authMiddleware(orgKeyStore: IOrgKeyStore, apiKeyStore: IApiKeySt
     }
 
     // JWT (issued via OAuth /oauth/token). Verified before the org key lookup
-    // because verification is cheap and the org key lookup is a bcrypt scan.
+    // because verification is cheap and avoids the key store lookups below.
     const jwtSecret = process.env.JWT_SECRET
     if (jwtSecret) {
       let payload: { apiKeyId?: string } | null = null

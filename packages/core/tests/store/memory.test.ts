@@ -1,6 +1,8 @@
 import { InMemoryWorkflowStore } from '../../src/store/memory/workflow'
 import { InMemorySessionStore } from '../../src/store/memory/session'
 import { InMemoryApiKeyStore } from '../../src/store/memory/apikey'
+import { InMemoryOrgKeyStore } from '../../src/store/memory/orgkey'
+import bcrypt from 'bcryptjs'
 import { WorkflowGraph } from '../../src/graph/types'
 import { Session } from '../../src/session/types'
 
@@ -169,5 +171,53 @@ describe('InMemoryApiKeyStore', () => {
     const list = await store.list()
     expect(list).toHaveLength(1)
     expect((list[0] as any).key).toBeUndefined()
+  })
+})
+
+describe('InMemoryApiKeyStore fast lookup', () => {
+  it('finds a key without any bcrypt.compare call', async () => {
+    const spy = jest.spyOn(bcrypt, 'compare')
+    try {
+      const store = new InMemoryApiKeyStore()
+      const { rawKey, record } = await store.create('k', 'org')
+      expect((await store.find(rawKey))?.id).toBe(record.id)
+      expect(await store.find('wrong')).toBeNull()
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('deleting one key leaves others findable', async () => {
+    const store = new InMemoryApiKeyStore()
+    const a = await store.create('a', 'org')
+    const b = await store.create('b', 'org')
+    await store.delete(a.record.id)
+    expect(await store.find(a.rawKey)).toBeNull()
+    expect((await store.find(b.rawKey))?.id).toBe(b.record.id)
+  })
+})
+
+describe('InMemoryOrgKeyStore fast lookup', () => {
+  it('finds by raw key and returns null for a wrong key', async () => {
+    const store = new InMemoryOrgKeyStore()
+    const { rawKey, record } = await store.create('acme', 5)
+    expect(await store.find(rawKey)).toEqual(record)
+    expect(await store.find('wrong')).toBeNull()
+  })
+
+  it('regenerate invalidates the old key', async () => {
+    const store = new InMemoryOrgKeyStore()
+    const { rawKey: oldRaw, record } = await store.create('acme', 5)
+    const { rawKey: newRaw } = await store.regenerate(record.id)
+    expect(await store.find(oldRaw)).toBeNull()
+    expect((await store.find(newRaw))?.id).toBe(record.id)
+  })
+
+  it('delete stops the key working', async () => {
+    const store = new InMemoryOrgKeyStore()
+    const { rawKey, record } = await store.create('acme', 5)
+    await store.delete(record.id)
+    expect(await store.find(rawKey)).toBeNull()
   })
 })

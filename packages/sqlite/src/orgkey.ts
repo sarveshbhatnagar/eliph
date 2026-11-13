@@ -1,7 +1,16 @@
 import Database from 'better-sqlite3'
-import { IOrgKeyStore, OrgKey } from '@eliph/core'
+import { IOrgKeyStore, OrgKey, keyLookupHash } from '@eliph/core'
 import bcrypt from 'bcryptjs'
 import { randomUUID } from 'crypto'
+import { findKeyRow, markKeyLookupVerified } from './keylookup'
+
+type OrgKeyRow = { id: string; label: string; created_at: string; key_hash: string; key_limit: number }
+
+const COLUMNS = 'id, label, created_at, key_hash, key_limit'
+
+function toOrgKey(row: OrgKeyRow): OrgKey {
+  return { id: row.id, label: row.label, createdAt: new Date(row.created_at), keyLimit: row.key_limit }
+}
 
 export class SqliteOrgKeyStore implements IOrgKeyStore {
   constructor(private db: Database.Database) {}
@@ -13,29 +22,17 @@ export class SqliteOrgKeyStore implements IOrgKeyStore {
     const now = new Date()
 
     this.db
-      .prepare('INSERT INTO org_keys (id, label, created_at, key_hash, key_limit) VALUES (?, ?, ?, ?, ?)')
-      .run(id, label, now.toISOString(), keyHash, keyLimit)
+      .prepare('INSERT INTO org_keys (id, label, created_at, key_hash, key_limit, key_lookup) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, label, now.toISOString(), keyHash, keyLimit, keyLookupHash(rawKey))
+    markKeyLookupVerified(id, keyHash)
 
     const record: OrgKey = { id, label, createdAt: now, keyLimit }
     return { rawKey, record }
   }
 
   async find(rawKey: string): Promise<OrgKey | null> {
-    const rows = this.db
-      .prepare('SELECT id, label, created_at, key_hash, key_limit FROM org_keys')
-      .all() as { id: string; label: string; created_at: string; key_hash: string; key_limit: number }[]
-
-    for (const row of rows) {
-      if (await bcrypt.compare(rawKey, row.key_hash)) {
-        return {
-          id: row.id,
-          label: row.label,
-          createdAt: new Date(row.created_at),
-          keyLimit: row.key_limit,
-        }
-      }
-    }
-    return null
+    const row = await findKeyRow<OrgKeyRow>(this.db, 'org_keys', COLUMNS, rawKey)
+    return row ? toOrgKey(row) : null
   }
 
   async list(): Promise<Array<OrgKey & { keyCount: number }>> {
@@ -74,7 +71,10 @@ export class SqliteOrgKeyStore implements IOrgKeyStore {
   async regenerate(id: string): Promise<{ rawKey: string }> {
     const rawKey = randomUUID()
     const keyHash = await bcrypt.hash(rawKey, 10)
-    this.db.prepare('UPDATE org_keys SET key_hash = ? WHERE id = ?').run(keyHash, id)
+    this.db
+      .prepare('UPDATE org_keys SET key_hash = ?, key_lookup = ? WHERE id = ?')
+      .run(keyHash, keyLookupHash(rawKey), id)
+    markKeyLookupVerified(id, keyHash)
     return { rawKey }
   }
 }
