@@ -14,7 +14,7 @@ async function strandedStates(sessionStore: ISessionStore, current: WorkflowGrap
   const removed = Object.keys(current.states).filter(s => !Object.prototype.hasOwnProperty.call(replacement.states, s))
   const stranded: string[] = []
   for (const state of removed) {
-    const sessions = (await sessionStore.findByState(current.name, state)).filter(s => s.workflowOwnerId === owner)
+    const sessions = (await sessionStore.findByState(current.name, state)).filter(s => s.workflowOwnerId === owner && !s.pinnedGraph)
     if (sessions.length > 0) stranded.push(state)
   }
   return stranded
@@ -314,7 +314,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
         // findByState is not owner-scoped: only this owner's sessions block removal
         const active = (await sessionStore.findByState(req.params.name, req.params.state))
-          .filter(s => s.workflowOwnerId === owner)
+          .filter(s => s.workflowOwnerId === owner && !s.pinnedGraph)
         if (active.length > 0) {
           return reply.code(409).send({ error: 'Active sessions exist in this state', code: 'CONFLICT' })
         }

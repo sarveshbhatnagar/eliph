@@ -144,6 +144,31 @@ describe('InMemorySessionStore', () => {
   })
 })
 
+describe('InMemorySessionStore.saveIfRevision', () => {
+  it('saves when the stored revision matches and refuses a stale one', async () => {
+    const store = new InMemorySessionStore()
+    await store.save(makeSession())
+    expect(await store.saveIfRevision({ ...makeSession(), currentState: 'review', revision: 1 }, 0)).toBe(true)
+    expect(await store.saveIfRevision({ ...makeSession(), currentState: 'lost', revision: 1 }, 0)).toBe(false)
+    expect(await store.get('sess-1')).toMatchObject({ currentState: 'review', revision: 1 })
+    expect(await store.saveIfRevision({ ...makeSession(), currentState: 'end', revision: 2 }, 1)).toBe(true)
+    expect(await store.get('sess-1')).toMatchObject({ currentState: 'end', revision: 2 })
+  })
+
+  it('treats a session without a revision as revision 0', async () => {
+    const store = new InMemorySessionStore()
+    await store.save(makeSession())
+    expect(await store.saveIfRevision({ ...makeSession(), revision: 1 }, 3)).toBe(false)
+    expect(await store.saveIfRevision({ ...makeSession(), revision: 1 }, 0)).toBe(true)
+  })
+
+  it('does not create a missing session', async () => {
+    const store = new InMemorySessionStore()
+    expect(await store.saveIfRevision({ ...makeSession(), revision: 1 }, 0)).toBe(false)
+    expect(await store.get('sess-1')).toBeNull()
+  })
+})
+
 describe('InMemorySessionStore.list', () => {
   function at(id: string, owner: string, iso: string, workflowName = 'test'): Session {
     return { ...makeSession(id), workflowOwnerId: owner, workflowName, createdAt: new Date(iso) }

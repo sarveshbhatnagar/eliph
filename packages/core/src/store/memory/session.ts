@@ -1,5 +1,6 @@
 import { ISessionStore, SessionListOptions } from '../interfaces'
 import { Session } from '../../session/types'
+import { sessionRevision } from '../../session/data'
 
 export class InMemorySessionStore implements ISessionStore {
   private store = new Map<string, Session>()
@@ -10,6 +11,14 @@ export class InMemorySessionStore implements ISessionStore {
 
   async save(session: Session): Promise<void> {
     this.store.set(session.id, session)
+  }
+
+  async saveIfRevision(session: Session, expectedRevision: number): Promise<boolean> {
+    // No await between the check and the write, so this is atomic
+    const stored = this.store.get(session.id)
+    if (!stored || sessionRevision(stored) !== expectedRevision) return false
+    this.store.set(session.id, session)
+    return true
   }
 
   async delete(id: string): Promise<void> {

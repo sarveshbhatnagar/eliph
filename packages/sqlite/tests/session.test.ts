@@ -140,6 +140,55 @@ describe('SqliteSessionStore.list', () => {
   })
 })
 
+describe('SqliteSessionStore.saveIfRevision', () => {
+  function store() {
+    return createStores(':memory:').sessionStore
+  }
+
+  it('saves when the stored revision matches and refuses a stale one', async () => {
+    const s = store()
+    await s.save(makeSession())
+    expect(await s.saveIfRevision(makeSession({ currentState: 'review', revision: 1 }), 0)).toBe(true)
+    // A writer that also read revision 0 loses, and changes nothing
+    expect(await s.saveIfRevision(makeSession({ currentState: 'lost', revision: 1 }), 0)).toBe(false)
+    const stored = await s.get('sess-1')
+    expect(stored!.currentState).toBe('review')
+    expect(stored!.revision).toBe(1)
+    expect(await s.saveIfRevision(makeSession({ currentState: 'end', revision: 2 }), 1)).toBe(true)
+    expect((await s.get('sess-1'))!.currentState).toBe('end')
+  })
+
+  it('keeps the indexed columns in sync', async () => {
+    const s = store()
+    await s.save(makeSession())
+    await s.saveIfRevision(makeSession({ currentState: 'review', revision: 1 }), 0)
+    expect((await s.findByState('flow', 'review')).map(x => x.id)).toEqual(['sess-1'])
+    expect(await s.findByState('flow', 'start')).toEqual([])
+  })
+
+  it('does not create a session that does not exist', async () => {
+    const s = store()
+    expect(await s.saveIfRevision(makeSession({ revision: 1 }), 0)).toBe(false)
+    expect(await s.get('sess-1')).toBeNull()
+  })
+
+  it('save() still overwrites unconditionally', async () => {
+    const s = store()
+    await s.save(makeSession({ revision: 5 }))
+    await s.save(makeSession({ currentState: 'review' }))
+    const stored = await s.get('sess-1')
+    expect(stored!.currentState).toBe('review')
+    expect(stored!.revision).toBeUndefined()
+  })
+
+  it('stores a pinned graph snapshot in the session', async () => {
+    const s = store()
+    const pinnedGraph = { name: 'flow', description: '', states: { start: { name: 'start', isTerminal: false } }, transitions: [] }
+    await s.save(makeSession({ pinnedGraph }))
+    expect((await s.get('sess-1'))!.pinnedGraph).toEqual(pinnedGraph)
+  })
+})
+
 describe('sessions.owner_id migration on an old-schema database', () => {
   let dir: string
 
@@ -190,6 +239,22 @@ describe('sessions.owner_id migration on an old-schema database', () => {
     expect(old!.data).toBeUndefined()
     expect(old!.events).toBeUndefined()
     expect(old!.updatedAt).toEqual(new Date('2026-01-05T00:00:00.000Z'))
+    db.close()
+  })
+
+  it('conditionally updates old rows, which have no revision (counted as 0)', async () => {
+    const path = join(dir, 'old.db')
+    createOldDb(path)
+    const db = openDb(path)
+    const store = new SqliteSessionStore(db)
+    const old = await store.get('a')
+    expect(old!.revision).toBeUndefined()
+    expect(await store.saveIfRevision({ ...old!, currentState: 'review', revision: 1 }, 1)).toBe(false)
+    expect(await store.saveIfRevision({ ...old!, currentState: 'review', revision: 1 }, 0)).toBe(true)
+    const updated = await store.get('a')
+    expect(updated!.currentState).toBe('review')
+    expect(updated!.revision).toBe(1)
+    expect(db.prepare('SELECT current_state, owner_id FROM sessions WHERE id = ?').get('a')).toEqual({ current_state: 'review', owner_id: 'org' })
     db.close()
   })
 

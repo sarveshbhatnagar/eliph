@@ -7,10 +7,13 @@ export function workflowQuery(workflowName?: string): string {
 
 export function makeSessionTools(client: ApiClient) {
   return {
-    create_session: async (args: { workflow_name: string; data?: Record<string, unknown> }) =>
-      client.request('POST', '/session', args.data !== undefined
-        ? { workflow: args.workflow_name, data: args.data }
-        : { workflow: args.workflow_name }),
+    create_session: async (args: { workflow_name: string; data?: Record<string, unknown>; pin?: boolean }) => {
+      // Optional fields only when supplied, so older request bodies are unchanged
+      const body: { workflow: string; data?: Record<string, unknown>; pin?: boolean } = { workflow: args.workflow_name }
+      if (args.data !== undefined) body.data = args.data
+      if (args.pin !== undefined) body.pin = args.pin
+      return client.request('POST', '/session', body)
+    },
 
     update_session_data: async (args: { session_id: string; data: Record<string, unknown> }) =>
       client.request('PATCH', `/session/${encodeURIComponent(args.session_id)}/data`, { data: args.data }),

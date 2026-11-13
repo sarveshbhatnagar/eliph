@@ -26,6 +26,12 @@ export interface SessionListOptions {
 export interface ISessionStore {
   get(id: string): Promise<Session | null>
   save(session: Session): Promise<void>
+  /**
+   * Atomically save `session` only if the stored session still exists and is at
+   * `expectedRevision` (a stored session without a revision counts as 0).
+   * Returns false, changing nothing, otherwise. The caller sets session.revision.
+   */
+  saveIfRevision(session: Session, expectedRevision: number): Promise<boolean>
   delete(id: string): Promise<void>
   findByState(workflowName: string, state: string): Promise<Session[]>
   /** Sessions whose workflowOwnerId is one of ownerIds, newest (createdAt) first. */
