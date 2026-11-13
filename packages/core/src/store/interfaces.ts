@@ -14,11 +14,22 @@ export interface IWorkflowStore {
   delete(name: string, ownerId: string): Promise<void>
 }
 
+export interface SessionListOptions {
+  /** Only sessions of this workflow (exact name). */
+  workflowName?: string
+  /** Maximum number of sessions to return. Omit for all. */
+  limit?: number
+  /** Number of sessions to skip (for paging). Default 0. */
+  offset?: number
+}
+
 export interface ISessionStore {
   get(id: string): Promise<Session | null>
   save(session: Session): Promise<void>
   delete(id: string): Promise<void>
   findByState(workflowName: string, state: string): Promise<Session[]>
+  /** Sessions whose workflowOwnerId is one of ownerIds, newest (createdAt) first. */
+  list(ownerIds: string[], opts?: SessionListOptions): Promise<Session[]>
 }
 
 export interface IOrgKeyStore {

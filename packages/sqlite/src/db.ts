@@ -39,7 +39,8 @@ export function openDb(path: string): Database.Database {
       current_state TEXT NOT NULL,
       created_at    TEXT NOT NULL,
       updated_at    TEXT NOT NULL,
-      data          TEXT NOT NULL
+      data          TEXT NOT NULL,
+      owner_id      TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_workflow_state
@@ -71,6 +72,7 @@ export function openDb(path: string): Database.Database {
   `)
 
   migrateKeyLookup(db)
+  migrateSessionOwner(db)
 
   return db
 }
@@ -92,5 +94,22 @@ function migrateKeyLookup(db: Database.Database): void {
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_org_keys_lookup ON org_keys(key_lookup);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_lookup ON api_keys(key_lookup);
+  `)
+}
+
+// Idempotent migration for databases created before sessions.owner_id existed.
+// The owner was only inside the JSON data blob; copy it into the column so
+// sessions can be listed by owner with an index. The backfill runs on every
+// open (cheap: only rows with a NULL owner_id) so rows written by an older
+// release after the migration are picked up too.
+function migrateSessionOwner(db: Database.Database): void {
+  if (!hasColumn(db, 'sessions', 'owner_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN owner_id TEXT')
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_owner_created ON sessions(owner_id, created_at);
+    UPDATE sessions
+      SET owner_id = json_extract(data, '$.workflowOwnerId')
+      WHERE owner_id IS NULL AND json_valid(data);
   `)
 }

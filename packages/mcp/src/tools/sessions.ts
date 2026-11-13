@@ -7,8 +7,22 @@ export function workflowQuery(workflowName?: string): string {
 
 export function makeSessionTools(client: ApiClient) {
   return {
-    create_session: async (args: { workflow_name: string }) =>
-      client.request('POST', '/session', { workflow: args.workflow_name }),
+    create_session: async (args: { workflow_name: string; data?: Record<string, unknown> }) =>
+      client.request('POST', '/session', args.data !== undefined
+        ? { workflow: args.workflow_name, data: args.data }
+        : { workflow: args.workflow_name }),
+
+    update_session_data: async (args: { session_id: string; data: Record<string, unknown> }) =>
+      client.request('PATCH', `/session/${encodeURIComponent(args.session_id)}/data`, { data: args.data }),
+
+    list_sessions: async (args: { workflow_name?: string; active?: boolean; limit?: number } = {}) => {
+      const params = new URLSearchParams()
+      if (args.workflow_name) params.set('workflow', args.workflow_name)
+      if (args.active !== undefined) params.set('active', String(args.active))
+      if (args.limit !== undefined) params.set('limit', String(args.limit))
+      const qs = params.toString()
+      return client.request('GET', `/sessions${qs ? `?${qs}` : ''}`)
+    },
 
     delete_session: async (args: { session_id: string }) => {
       await client.request('DELETE', `/session/${encodeURIComponent(args.session_id)}`)

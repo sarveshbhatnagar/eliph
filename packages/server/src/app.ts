@@ -77,12 +77,38 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     required: workflowGraphRequired,
   })
 
+  app.addSchema({
+    $id: 'SessionData',
+    type: 'object',
+    additionalProperties: true,
+    description: 'Free-form JSON object stored on the session (max 64 KB serialized). Use it to carry what was gathered (ids, links, decisions) across conversations.',
+  })
+
+  app.addSchema({
+    $id: 'SessionEvent',
+    type: 'object',
+    properties: {
+      type: { type: 'string', enum: ['created', 'advance', 'reset', 'data'] },
+      from: { type: 'string' },
+      to: { type: 'string' },
+      action: { type: 'string' },
+      note: { type: 'string' },
+      at: { type: 'string', format: 'date-time' },
+    },
+    required: ['type', 'at'],
+  })
+
   const sessionProperties = {
     id: { type: 'string' },
     workflowName: { type: 'string' },
     currentState: { type: 'string' },
     history: { type: 'array', items: { type: 'string' } },
     createdAt: { type: 'string', format: 'date-time' },
+    data: { $ref: 'SessionData#' },
+    // Step context for the current state, so no separate current_state/next calls are needed
+    stateDescription: { type: 'string', nullable: true, description: 'Description of the current state (agent instructions), or null.' },
+    isTerminal: { type: 'boolean', description: 'Whether the current state is terminal (workflow complete).' },
+    nextTransitions: { type: 'array', items: { $ref: 'Transition#' }, description: 'Transitions available from the current state.' },
   }
   const sessionRequired = ['id', 'workflowName', 'currentState', 'history', 'createdAt']
 
