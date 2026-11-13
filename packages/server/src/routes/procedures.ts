@@ -1,6 +1,7 @@
 import { FastifyInstance } from 'fastify'
 import { IWorkflowStore, ISessionStore, WorkflowGraph, addTransition, removeTransition, removeState, markStateTerminal } from '@eliph/core'
 import { requestOwnerId } from '../middleware/auth'
+import { withWarnings, workflowExistsConflict, overwriteProperty } from './workflow-helpers'
 
 const authed = [{ BearerAuth: [] }]
 
@@ -85,16 +86,16 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           properties: { name: { type: 'string' } },
         },
         response: {
-          200: { $ref: 'WorkflowGraph#' },
+          200: { $ref: 'WorkflowGraphWithWarnings#' },
         },
       } as any,
     }, async (req, reply) => {
       const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
-      reply.send(graph)
+      reply.send(withWarnings(graph))
     })
 
-    app.post<{ Body: { workflow_name: string; description: string } }>('/procedure', {
+    app.post<{ Body: { workflow_name: string; description: string; overwrite?: boolean } }>('/procedure', {
       schema: {
         tags: ['Procedures'],
         summary: 'Create a new procedure',
@@ -105,6 +106,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
           properties: {
             workflow_name: { type: 'string' },
             description: { type: 'string' },
+            overwrite: overwriteProperty,
           },
         },
         response: {
@@ -112,14 +114,18 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         },
       } as any,
     }, async (req, reply) => {
-      const { workflow_name, description } = req.body
+      const { workflow_name, description, overwrite } = req.body
+      const owner = requestOwnerId(req)
+      if (overwrite !== true && await workflowStore.get(workflow_name, owner)) {
+        return reply.code(409).send(workflowExistsConflict(workflow_name))
+      }
       const graph: WorkflowGraph = {
         name: workflow_name,
         description,
         states: { start: { name: 'start', isTerminal: false } },
         transitions: [],
       }
-      await workflowStore.save(graph, requestOwnerId(req))
+      await workflowStore.save(graph, owner)
       reply.code(201).send(graph)
     })
 
@@ -139,7 +145,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
             properties: { transition: { type: 'string' } },
           },
           response: {
-            200: { $ref: 'WorkflowGraph#' },
+            200: { $ref: 'WorkflowGraphWithWarnings#' },
           },
         } as any,
       }, async (req, reply) => {
@@ -149,7 +155,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         try {
           const updated = addTransition(graph, req.body.transition)
           await workflowStore.save(updated, owner)
-          reply.send(updated)
+          reply.send(withWarnings(updated))
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
         }
@@ -172,7 +178,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
             properties: { transition: { type: 'string' } },
           },
           response: {
-            200: { $ref: 'WorkflowGraph#' },
+            200: { $ref: 'WorkflowGraphWithWarnings#' },
           },
         } as any,
       }, async (req, reply) => {
@@ -182,7 +188,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         try {
           const updated = removeTransition(graph, req.body.transition)
           await workflowStore.save(updated, owner)
-          reply.send(updated)
+          reply.send(withWarnings(updated))
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
         }
@@ -203,7 +209,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
             },
           },
           response: {
-            200: { $ref: 'WorkflowGraph#' },
+            200: { $ref: 'WorkflowGraphWithWarnings#' },
           },
         } as any,
       }, async (req, reply) => {
@@ -219,7 +225,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         try {
           const updated = removeState(graph, req.params.state)
           await workflowStore.save(updated, owner)
-          reply.send(updated)
+          reply.send(withWarnings(updated))
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
         }
@@ -272,7 +278,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
             type: 'object',
             properties: { name: { type: 'string' }, state: { type: 'string' } },
           },
-          response: { 200: { $ref: 'WorkflowGraph#' } },
+          response: { 200: { $ref: 'WorkflowGraphWithWarnings#' } },
         } as any,
       }, async (req, reply) => {
         const owner = requestOwnerId(req)
@@ -281,7 +287,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
         try {
           const updated = markStateTerminal(graph, req.params.state)
           await workflowStore.save(updated, owner)
-          reply.send(updated)
+          reply.send(withWarnings(updated))
         } catch (e: any) {
           reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
         }

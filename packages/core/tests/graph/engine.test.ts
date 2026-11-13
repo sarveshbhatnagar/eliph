@@ -1,4 +1,4 @@
-import { parseTransition, validateGraph, addTransition, removeTransition, removeState, getNextTransitions, sampleNext, requirements } from '../../src/graph/engine'
+import { parseTransition, validateGraph, graphWarnings, addTransition, removeTransition, removeState, getNextTransitions, sampleNext, requirements } from '../../src/graph/engine'
 import { Transition } from '../../src/graph/types'
 import { WorkflowGraph } from '../../src/graph/types'
 
@@ -261,5 +261,241 @@ describe('requirements', () => {
     let graph = makeGraph()
     graph = addTransition(graph, 'start -> review')
     expect(requirements(graph, 'start')).toHaveLength(0)
+  })
+})
+
+describe('parseTransition — strict numeric labels', () => {
+  it('treats a label with a numeric prefix as a symbolic action', () => {
+    expect(parseTransition('a -2fa_done-> b')).toEqual({ from: 'a', to: 'b', type: 'symbolic', action: '2fa_done' })
+  })
+
+  it.each([
+    ['a -1st_pass-> b', '1st_pass'],
+    ['a -0x10-> b', '0x10'],
+    ['a -.5x-> b', '.5x'],
+    ['a -Infinity-> b', 'Infinity'],
+    ['a -1 2-> b', '1 2'],
+  ])('%s is symbolic', (str, action) => {
+    expect(parseTransition(str)).toMatchObject({ type: 'symbolic', action })
+  })
+
+  it.each([
+    ['a -.5-> b', 0.5],
+    ['a -0.25-> b', 0.25],
+    ['a -1-> b', 1],
+    ['a -1.0-> b', 1],
+    ['a - .5 -> b', 0.5],
+    ['a -1e-3-> b', 0.001],
+  ])('%s is probabilistic', (str, weight) => {
+    expect(parseTransition(str)).toEqual({ from: 'a', to: 'b', type: 'probabilistic', weight })
+  })
+
+  it.each(['a -0-> b', 'a -1.5-> b', 'a -2-> b', 'a --0.5-> b', 'a -1e999-> b'])('rejects out-of-range weight in %s', (str) => {
+    expect(() => parseTransition(str)).toThrow('weights must be greater than 0 and at most 1')
+  })
+})
+
+describe('parseTransition — hyphenated labels', () => {
+  it('parses a hyphenated action', () => {
+    expect(parseTransition('a -tests-pass-> b')).toEqual({ from: 'a', to: 'b', type: 'symbolic', action: 'tests-pass' })
+  })
+
+  it('parses a multi-hyphen action', () => {
+    expect(parseTransition('a -x-y-z-> b')).toMatchObject({ type: 'symbolic', action: 'x-y-z' })
+  })
+
+  it('does not allow "->" inside a label', () => {
+    expect(() => parseTransition('a -x->y-> b')).toThrow('Invalid transition string')
+  })
+
+  it.each(['a --> b', 'a -> -> b', 'a -x b', '-> b'])('still rejects %s', (str) => {
+    expect(() => parseTransition(str)).toThrow('Invalid transition string')
+  })
+})
+
+describe('parseTransition — strings that parsed before keep their result', () => {
+  it.each([
+    ['start -> review', { from: 'start', to: 'review', type: 'deterministic' }],
+    ['start->review', { from: 'start', to: 'review', type: 'deterministic' }],
+    ['start -.5-> heads', { from: 'start', to: 'heads', type: 'probabilistic', weight: 0.5 }],
+    ['start -.5->heads', { from: 'start', to: 'heads', type: 'probabilistic', weight: 0.5 }],
+    ['start -check_todo_done-> reviewing', { from: 'start', to: 'reviewing', type: 'symbolic', action: 'check_todo_done' }],
+    ['start - spaced action -> b', { from: 'start', to: 'b', type: 'symbolic', action: 'spaced action' }],
+    ['start - b -> c', { from: 'start', to: 'c', type: 'symbolic', action: 'b' }],
+  ])('%s', (str, expected) => {
+    expect(parseTransition(str)).toEqual(expected)
+  })
+})
+
+describe('addTransition — chains with the new label rules', () => {
+  it('splits a chain with a hyphenated label', () => {
+    const updated = addTransition(makeGraph(), 'a -x-y-> b -> c')
+    expect(updated.transitions).toEqual([
+      { from: 'a', to: 'b', type: 'symbolic', action: 'x-y' },
+      { from: 'b', to: 'c', type: 'deterministic' },
+    ])
+  })
+
+  it('splits a chain mixing hyphenated, numeric-prefix and probabilistic labels', () => {
+    const updated = addTransition(makeGraph(), 'start -tests-pass-> review -2fa_done-> gate -1-> end')
+    expect(updated.transitions).toEqual([
+      { from: 'start', to: 'review', type: 'symbolic', action: 'tests-pass' },
+      { from: 'review', to: 'gate', type: 'symbolic', action: '2fa_done' },
+      { from: 'gate', to: 'end', type: 'probabilistic', weight: 1 },
+    ])
+  })
+
+  it('rejects a chain containing an invalid weight without partial application', () => {
+    const graph = makeGraph()
+    expect(() => addTransition(graph, 'start -> a -2-> b')).toThrow('at most 1')
+    expect(graph.transitions).toHaveLength(0)
+  })
+})
+
+describe('addTransition — probabilistic weight budget', () => {
+  it('rejects a weight that pushes the outgoing sum above 1.0', () => {
+    const graph = addTransition(makeGraph(), 'start -.7-> heads')
+    expect(() => addTransition(graph, 'start -.4-> tails')).toThrow('exceeds 1.0')
+  })
+
+  it('suggests the remaining budget in the error', () => {
+    const graph = addTransition(makeGraph(), 'start -.7-> heads')
+    expect(() => addTransition(graph, 'start -.4-> tails')).toThrow('at most 0.3')
+  })
+
+  it('allows sums up to 1.0 within the 0.001 tolerance', () => {
+    let graph = makeGraph()
+    graph = addTransition(graph, 'start -.3333-> a')
+    graph = addTransition(graph, 'start -.3333-> b')
+    graph = addTransition(graph, 'start -.3344-> c')
+    expect(graph.transitions).toHaveLength(3)
+  })
+
+  it('counts each source state separately', () => {
+    let graph = addTransition(makeGraph(), 'start -.7-> a')
+    graph = addTransition(graph, 'a -.7-> b')
+    expect(graph.transitions).toHaveLength(2)
+  })
+
+  it('checks within a single chain', () => {
+    expect(() => addTransition(makeGraph(), 'start -.6-> start -.6-> b')).toThrow('exceeds 1.0')
+  })
+})
+
+describe('removeTransition — consistent with the parser', () => {
+  it('removes a hyphenated symbolic transition', () => {
+    let graph = addTransition(makeGraph(), 'start -tests-pass-> end')
+    graph = removeTransition(graph, 'start -tests-pass-> end')
+    expect(graph.transitions).toHaveLength(0)
+  })
+
+  it('removes a numeric-prefix symbolic transition', () => {
+    let graph = addTransition(makeGraph(), 'start -2fa_done-> end')
+    graph = removeTransition(graph, 'start -2fa_done-> end')
+    expect(graph.transitions).toHaveLength(0)
+  })
+
+  it('can still remove a legacy out-of-range probabilistic edge by its weight', () => {
+    const graph = makeGraph({ transitions: [{ from: 'start', to: 'b', type: 'probabilistic', weight: 2 }] })
+    expect(removeTransition(graph, 'start -2-> b').transitions).toHaveLength(0)
+  })
+})
+
+describe('graphWarnings', () => {
+  const ok = (): WorkflowGraph => addTransition(makeGraph(), 'start -> review -> end')
+
+  it('returns no warnings for a complete linear graph', () => {
+    expect(graphWarnings(ok())).toEqual([])
+  })
+
+  it('includes everything validateGraph reports', () => {
+    const graph = makeGraph({ states: {} })
+    for (const e of validateGraph(graph)) expect(graphWarnings(graph)).toContain(e)
+  })
+
+  it('warns when probabilistic weights do not sum to 1.0', () => {
+    let graph = addTransition(makeGraph(), 'start -.5-> heads -> end')
+    expect(graphWarnings(graph).some(w => w.includes('"start"') && w.includes('sum to 1.0'))).toBe(true)
+    graph = addTransition(graph, 'start -.5-> tails -> end')
+    expect(graphWarnings(graph)).toEqual([])
+  })
+
+  it('warns about more than one deterministic exit', () => {
+    const graph = addTransition(ok(), 'review -> other -> end')
+    const warnings = graphWarnings(graph)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('"review"')
+    expect(warnings[0]).toContain('2 deterministic exits')
+  })
+
+  it('does not warn about one deterministic exit alongside symbolic ones', () => {
+    const graph = addTransition(ok(), 'review -reject-> start')
+    expect(graphWarnings(graph)).toEqual([])
+  })
+
+  it('warns when a state mixes probabilistic with deterministic or symbolic exits', () => {
+    let graph = addTransition(makeGraph(), 'start -1-> end')
+    graph = addTransition(graph, 'start -skip-> end')
+    const warnings = graphWarnings(graph)
+    expect(warnings.some(w => w.includes('"start"') && w.includes('mixes probabilistic'))).toBe(true)
+  })
+
+  it('warns about a non-terminal state with no outgoing transitions', () => {
+    const graph = addTransition(ok(), 'start -alt-> limbo')
+    const warnings = graphWarnings(graph)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('"limbo"')
+    expect(warnings[0]).toContain('no outgoing transitions')
+  })
+
+  it('does not warn about terminal states without exits', () => {
+    const graph = addTransition(makeGraph(), 'start -> done')
+    expect(graphWarnings({ ...graph, states: { ...graph.states, done: { name: 'done', isTerminal: true } } })).toEqual([])
+  })
+
+  it('warns when no terminal state is defined', () => {
+    const graph = addTransition(makeGraph(), 'start -> a -> start')
+    expect(graphWarnings(graph).some(w => w.includes('No terminal state is defined'))).toBe(true)
+  })
+
+  it('warns when no terminal state is reachable from start', () => {
+    let graph = addTransition(makeGraph(), 'start -> a -> start')
+    graph = addTransition(graph, 'island -> end')
+    const warnings = graphWarnings(graph)
+    expect(warnings.some(w => w.includes('No terminal state is reachable from "start"'))).toBe(true)
+  })
+
+  it('a fresh procedure (start only) gets warnings, not errors', () => {
+    const warnings = graphWarnings(makeGraph())
+    expect(warnings.some(w => w.includes('"start"') && w.includes('no outgoing transitions'))).toBe(true)
+    expect(warnings.some(w => w.includes('No terminal state'))).toBe(true)
+    expect(validateGraph(makeGraph())).toEqual([])
+  })
+})
+
+describe('removeTransition legacy numeric-prefix edges', () => {
+  it('removes an edge stored as probabilistic by the old parser using its original string', () => {
+    const graph = {
+      name: 'wf',
+      description: '',
+      states: { a: { name: 'a', isTerminal: false }, b: { name: 'b', isTerminal: false } },
+      transitions: [{ from: 'a', to: 'b', type: 'probabilistic' as const, weight: 2 }],
+    }
+    expect(removeTransition(graph, 'a -2fa_done-> b').transitions).toEqual([])
+  })
+
+  it('prefers the symbolic edge when one exists', () => {
+    const graph = {
+      name: 'wf',
+      description: '',
+      states: { a: { name: 'a', isTerminal: false }, b: { name: 'b', isTerminal: false } },
+      transitions: [
+        { from: 'a', to: 'b', type: 'probabilistic' as const, weight: 2 },
+        { from: 'a', to: 'b', type: 'symbolic' as const, action: '2fa_done' },
+      ],
+    }
+    expect(removeTransition(graph, 'a -2fa_done-> b').transitions).toEqual([
+      { from: 'a', to: 'b', type: 'probabilistic', weight: 2 },
+    ])
   })
 })
