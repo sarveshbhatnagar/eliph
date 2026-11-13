@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify'
 import { IWorkflowStore } from '@eliph/core'
-import { MARKETPLACE_OWNER_ID, requestOwnerId } from '../middleware/auth'
+import { MARKETPLACE_OWNER_ID } from '../middleware/auth'
 
 
 export function marketplaceRoutes(workflowStore: IWorkflowStore) {
