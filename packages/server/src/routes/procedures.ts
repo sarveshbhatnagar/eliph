@@ -2,6 +2,7 @@ import { FastifyInstance } from 'fastify'
 import {
   IWorkflowStore, ISessionStore, IApiKeyStore, WorkflowGraph, TransitionDefinition, StateDefinition, addTransition, removeTransition, removeState,
   markStateTerminal, buildGraph, hasState, DEFINITION_LIMITS, REQUIRES_LIMITS, REQUIRES_NAME_PATTERN, setTransitionRequires, computeProcedureStats,
+  exportWorkflowScript, WorkflowExportError, WORKFLOW_EXPORT_STEPS,
 } from '@eliph/core'
 import { requestOwnerId, sessionOwnerIdsForListing } from '../middleware/auth'
 import { withWarnings, workflowExistsConflict, overwriteProperty } from './workflow-helpers'
@@ -395,6 +396,50 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       const sessions = await sessionStore.list(ownerIds, { workflowName: req.params.name, limit: STATS_MAX_SESSIONS + 1 })
       const truncated = sessions.length > STATS_MAX_SESSIONS
       reply.send(computeProcedureStats(graph.name, graph, sessions.slice(0, STATS_MAX_SESSIONS), truncated))
+    })
+
+    app.get<{ Params: { name: string }; Querystring: { max_steps?: number } }>('/procedure/:name/workflow-script', {
+      schema: {
+        tags: ['Procedures'],
+        summary: 'Export a procedure as a workflow script',
+        description: 'Turns the procedure into a plain-JavaScript workflow script that runs it once per item with parallel agents, without talking '
+          + 'to this API. The script returns `items` (label, data, steps) in the shape POST /job accepts, so a finished script run is reported with '
+          + 'one call. `argsExample` shows the input the script expects and `notes` lists caveats of this export. A procedure that cannot be '
+          + 'exported (a probabilistic transition, no "start" state, a reachable non-terminal state with no exits) answers 400 NOT_EXPORTABLE.',
+        security: authed,
+        params: nameParams,
+        querystring: {
+          type: 'object',
+          properties: {
+            max_steps: {
+              type: 'integer',
+              description: `Optional. Most steps one item may take before the script stops it (default ${WORKFLOW_EXPORT_STEPS.default}; `
+                + `values outside ${WORKFLOW_EXPORT_STEPS.min}-${WORKFLOW_EXPORT_STEPS.max} are brought into that range). Bounds loops.`,
+            },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              workflow: { type: 'string' },
+              script: { type: 'string', description: 'The workflow script source.' },
+              argsExample: { description: 'An example of the args the script expects.' },
+              notes: { type: 'array', items: { type: 'string' }, description: 'Human-readable caveats about this export.' },
+            },
+            required: ['workflow', 'script', 'notes'],
+          },
+        },
+      } as any,
+    }, async (req, reply) => {
+      const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
+      if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
+      try {
+        reply.send({ workflow: graph.name, ...exportWorkflowScript(graph, { maxSteps: req.query.max_steps }) })
+      } catch (e) {
+        if (e instanceof WorkflowExportError) return reply.code(400).send({ error: e.message, code: e.code })
+        throw e
+      }
     })
 
     app.delete<{ Params: { name: string }; Body: { transition: string } }>(

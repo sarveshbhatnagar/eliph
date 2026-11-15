@@ -40,7 +40,8 @@ export function openDb(path: string): Database.Database {
       created_at    TEXT NOT NULL,
       updated_at    TEXT NOT NULL,
       data          TEXT NOT NULL,
-      owner_id      TEXT
+      owner_id      TEXT,
+      job_id        TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_sessions_workflow_state
@@ -73,6 +74,7 @@ export function openDb(path: string): Database.Database {
 
   migrateKeyLookup(db)
   migrateSessionOwner(db)
+  migrateSessionJob(db)
 
   return db
 }
@@ -111,5 +113,26 @@ function migrateSessionOwner(db: Database.Database): void {
     UPDATE sessions
       SET owner_id = json_extract(data, '$.workflowOwnerId')
       WHERE owner_id IS NULL AND json_valid(data);
+  `)
+}
+
+// Idempotent migration for databases created before sessions.job_id existed.
+// Sessions outside a job keep job_id = NULL. Like owner_id, the column mirrors
+// a field of the JSON data blob (jobId) so a job's sessions can be found with
+// an index; the backfill runs on every open (a rolled-back release may have
+// rewritten a row without the column) and only touches rows whose blob names a
+// job the column does not have yet. The instr() test comes first so the blobs
+// of sessions outside a job, which never get a job_id, are not parsed as JSON
+// on every start.
+function migrateSessionJob(db: Database.Database): void {
+  if (!hasColumn(db, 'sessions', 'job_id')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN job_id TEXT')
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_job ON sessions(job_id, created_at);
+    UPDATE sessions
+      SET job_id = json_extract(data, '$.jobId')
+      WHERE job_id IS NULL AND instr(data, '"jobId"') > 0
+        AND json_valid(data) AND json_extract(data, '$.jobId') IS NOT NULL;
   `)
 }

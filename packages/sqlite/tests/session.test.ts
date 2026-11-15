@@ -275,3 +275,184 @@ describe('sessions.owner_id migration on an old-schema database', () => {
     db.close()
   })
 })
+
+describe('SqliteSessionStore jobs', () => {
+  const at = (day: number) => new Date(`2026-01-0${day}T00:00:00.000Z`)
+
+  async function seeded() {
+    const s = createStores(':memory:').sessionStore
+    await s.save(makeSession({ id: 'b', jobId: 'job-1', label: 'two', createdAt: at(2) }))
+    await s.save(makeSession({ id: 'z', jobId: 'job-1', label: 'one', createdAt: at(1) }))
+    await s.save(makeSession({ id: 'a', jobId: 'job-1', label: 'three', createdAt: at(2) }))
+    await s.save(makeSession({ id: 'other', jobId: 'job-2', label: 'one', workflowOwnerId: 'owner-2', createdAt: at(1) }))
+    await s.save(makeSession({ id: 'alone', createdAt: at(3) }))
+    return s
+  }
+
+  it('round-trips jobId, label and event actors', async () => {
+    const s = createStores(':memory:').sessionStore
+    const events = [{ type: 'advance' as const, from: 'start', to: 'review', actor: 'worker-1', at: '2026-01-01T00:00:00.000Z' }]
+    await s.save(makeSession({ jobId: 'job-1', label: 'part-a', events }))
+    const result = await s.get('sess-1')
+    expect(result).toMatchObject({ jobId: 'job-1', label: 'part-a' })
+    expect(result!.events).toEqual(events)
+  })
+
+  it('listByJob returns the job sessions oldest first, then by id', async () => {
+    const result = await (await seeded()).listByJob('job-1')
+    expect(result.map(x => x.id)).toEqual(['z', 'a', 'b'])
+    expect(result[0]).toMatchObject({ jobId: 'job-1', label: 'one' })
+    expect(result[0].createdAt).toEqual(at(1))
+  })
+
+  it('listByJob ignores owners and returns nothing for an unknown job', async () => {
+    const s = await seeded()
+    expect((await s.listByJob('job-2')).map(x => x.id)).toEqual(['other'])
+    expect(await s.listByJob('nope')).toEqual([])
+  })
+
+  it('list filters by jobId within the given owners', async () => {
+    const s = await seeded()
+    expect((await s.list(['owner-1'], { jobId: 'job-1' })).map(x => x.id)).toEqual(['b', 'a', 'z'])
+    expect(await s.list(['owner-1'], { jobId: 'job-2' })).toEqual([])
+    expect((await s.list(['owner-1'], { jobId: 'job-1', limit: 1, offset: 1 })).map(x => x.id)).toEqual(['a'])
+    expect((await s.list(['owner-1'], { jobId: 'job-1', workflowName: 'other' }))).toEqual([])
+    // No filter: sessions outside any job are still listed
+    expect((await s.list(['owner-1'])).map(x => x.id)).toEqual(['alone', 'b', 'a', 'z'])
+  })
+
+  it('save() keeps the job_id column in sync, including leaving a job', async () => {
+    const s = await seeded()
+    await s.save(makeSession({ id: 'b', createdAt: at(2) }))
+    expect((await s.listByJob('job-1')).map(x => x.id)).toEqual(['z', 'a'])
+    await s.save(makeSession({ id: 'alone', jobId: 'job-1', label: 'late', createdAt: at(3) }))
+    expect((await s.listByJob('job-1')).map(x => x.id)).toEqual(['z', 'a', 'alone'])
+  })
+
+  it('saveIfRevision writes job_id and keeps a job session in its job', async () => {
+    const s = await seeded()
+    const run = (await s.get('z'))!
+    expect(await s.saveIfRevision({ ...run, currentState: 'review', revision: 1 }, 0)).toBe(true)
+    expect((await s.listByJob('job-1')).map(x => `${x.id}:${x.currentState}`)).toEqual(['z:review', 'a:start', 'b:start'])
+    const alone = (await s.get('alone'))!
+    expect(await s.saveIfRevision({ ...alone, jobId: 'job-2', label: 'two', revision: 1 }, 0)).toBe(true)
+    expect((await s.listByJob('job-2')).map(x => x.id)).toEqual(['other', 'alone'])
+  })
+})
+
+describe('sessions.job_id migration on an old-schema database', () => {
+  let dir: string
+
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'eliph-sessions-job-')) })
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+
+  const INSERT = 'INSERT INTO sessions (id, workflow_name, current_state, created_at, updated_at, data, owner_id) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  const blob = (id: string, createdAt: string, extra: Record<string, unknown> = {}) => JSON.stringify({
+    id, workflowName: 'flow', workflowOwnerId: 'org', currentState: 'start', history: ['start'], createdAt, ...extra,
+  })
+
+  // The sessions table exactly as created by the previous release (no job_id)
+  function createOldDb(path: string) {
+    const db = new Database(path)
+    db.exec(`
+      CREATE TABLE sessions (
+        id            TEXT PRIMARY KEY,
+        workflow_name TEXT NOT NULL,
+        current_state TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        data          TEXT NOT NULL,
+        owner_id      TEXT
+      );
+      CREATE INDEX idx_sessions_workflow_state ON sessions(workflow_name, current_state);
+      CREATE INDEX idx_sessions_owner_created ON sessions(owner_id, created_at);
+    `)
+    const insert = db.prepare(INSERT)
+    insert.run('a', 'flow', 'start', '2026-01-01T00:00:00.000Z', '2026-01-05T00:00:00.000Z', blob('a', '2026-01-01T00:00:00.000Z'), 'org')
+    insert.run('b', 'flow', 'start', '2026-01-02T00:00:00.000Z', '2026-01-02T00:00:00.000Z', blob('b', '2026-01-02T00:00:00.000Z'), 'org')
+    insert.run('bad', 'flow', 'start', '2026-01-04T00:00:00.000Z', '2026-01-04T00:00:00.000Z', 'not json', null)
+    db.close()
+  }
+
+  it('adds job_id (NULL for old rows) and its index, and keeps old rows readable', async () => {
+    const path = join(dir, 'old.db')
+    createOldDb(path)
+    const db = openDb(path)
+    const cols = (db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).toContain('job_id')
+    const indexes = (db.prepare('PRAGMA index_list(sessions)').all() as { name: string }[]).map(i => i.name)
+    expect(indexes).toContain('idx_sessions_job')
+    expect(db.prepare('SELECT id, job_id FROM sessions ORDER BY id').all()).toEqual([
+      { id: 'a', job_id: null },
+      { id: 'b', job_id: null },
+      { id: 'bad', job_id: null },
+    ])
+    const store = new SqliteSessionStore(db)
+    const old = await store.get('a')
+    expect(old).toMatchObject({ id: 'a', currentState: 'start', workflowOwnerId: 'org' })
+    expect(old!.jobId).toBeUndefined()
+    expect(old!.label).toBeUndefined()
+    expect(old!.updatedAt).toEqual(new Date('2026-01-05T00:00:00.000Z'))
+    expect((await store.list(['org'])).map(s => s.id)).toEqual(['b', 'a'])
+    expect(await store.listByJob('job-1')).toEqual([])
+    db.close()
+  })
+
+  it('lets old rows be saved, conditionally updated and put in a job after the migration', async () => {
+    const path = join(dir, 'old.db')
+    createOldDb(path)
+    const db = openDb(path)
+    const store = new SqliteSessionStore(db)
+    const old = await store.get('a')
+    expect(await store.saveIfRevision({ ...old!, currentState: 'review', revision: 1 }, 0)).toBe(true)
+    expect(db.prepare('SELECT current_state, owner_id, job_id FROM sessions WHERE id = ?').get('a'))
+      .toEqual({ current_state: 'review', owner_id: 'org', job_id: null })
+    await store.save({ ...(await store.get('b'))!, jobId: 'job-1', label: 'part-b' })
+    expect((await store.listByJob('job-1')).map(s => s.id)).toEqual(['b'])
+    db.close()
+  })
+
+  it('is idempotent across reopenings and backfills job_id from the JSON blob', async () => {
+    const path = join(dir, 'old.db')
+    createOldDb(path)
+    openDb(path).close()
+    // A job session whose row lacks job_id (written without the column)
+    const raw = new Database(path)
+    raw.prepare(INSERT).run('late', 'flow', 'start', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z',
+      blob('late', '2026-02-01T00:00:00.000Z', { jobId: 'job-9', label: 'late' }), 'org')
+    raw.close()
+    const db = openDb(path)
+    expect(db.prepare('SELECT id, job_id FROM sessions ORDER BY id').all()).toEqual([
+      { id: 'a', job_id: null },
+      { id: 'b', job_id: null },
+      { id: 'bad', job_id: null },
+      { id: 'late', job_id: 'job-9' },
+    ])
+    expect((await new SqliteSessionStore(db).listByJob('job-9')).map(s => s.id)).toEqual(['late'])
+    db.close()
+  })
+
+  it('the backfill leaves sessions outside a job alone, also when their data mentions "jobId"', async () => {
+    const path = join(dir, 'old.db')
+    createOldDb(path)
+    const raw = new Database(path)
+    // User data that only talks about a jobId, and a nested one: neither is the session's own jobId
+    raw.prepare(INSERT).run('talk', 'flow', 'start', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z',
+      blob('talk', '2026-02-01T00:00:00.000Z', { data: { note: 'see "jobId" in the docs', jobId: 'user-value' } }), 'org')
+    raw.close()
+    openDb(path).close()
+    const db = openDb(path)
+    expect(db.prepare('SELECT job_id FROM sessions WHERE id = ?').get('talk')).toEqual({ job_id: null })
+    expect(await new SqliteSessionStore(db).listByJob('user-value')).toEqual([])
+    db.close()
+  })
+
+  it('creates job_id and its index on a brand new database', () => {
+    const db = openDb(join(dir, 'new.db'))
+    const cols = (db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[]).map(c => c.name)
+    expect(cols).toContain('job_id')
+    const indexes = (db.prepare('PRAGMA index_list(sessions)').all() as { name: string }[]).map(i => i.name)
+    expect(indexes).toContain('idx_sessions_job')
+    db.close()
+  })
+})

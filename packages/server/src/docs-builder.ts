@@ -6,6 +6,7 @@ import { keysRoutes } from './routes/keys'
 import { orgKeysRoutes } from './routes/orgkeys'
 import { proceduresRoutes } from './routes/procedures'
 import { sessionsRoutes } from './routes/sessions'
+import { jobsRoutes } from './routes/jobs'
 import { writeFileSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
 
@@ -49,6 +50,7 @@ export async function generateSpec(): Promise<object> {
   app.register(orgKeysRoutes(stores.orgKeyStore, stores.usageStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore, stores.apiKeyStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
+  app.register(jobsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   await app.ready()
   return app.swagger()

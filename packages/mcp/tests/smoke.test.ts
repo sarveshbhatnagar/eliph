@@ -21,6 +21,11 @@ describe('MCP server', () => {
     expect(toolNames).toContain('requirements')
     expect(toolNames).toContain('update_session_data')
     expect(toolNames).toContain('list_sessions')
+    expect(toolNames).toContain('create_job')
+    expect(toolNames).toContain('job_status')
+    expect(toolNames).toContain('advance_job')
+    expect(toolNames).toContain('delete_job')
+    expect(toolNames).toContain('export_workflow')
   })
 
   it('has metadata for every registered tool', () => {

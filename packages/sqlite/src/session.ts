@@ -29,14 +29,15 @@ export class SqliteSessionStore implements ISessionStore {
     const now = new Date().toISOString()
     this.db
       .prepare(`
-        INSERT INTO sessions (id, workflow_name, current_state, created_at, updated_at, data, owner_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO sessions (id, workflow_name, current_state, created_at, updated_at, data, owner_id, job_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           workflow_name = excluded.workflow_name,
           current_state = excluded.current_state,
           updated_at    = excluded.updated_at,
           data          = excluded.data,
-          owner_id      = excluded.owner_id
+          owner_id      = excluded.owner_id,
+          job_id        = excluded.job_id
       `)
       .run(
         session.id,
@@ -46,6 +47,7 @@ export class SqliteSessionStore implements ISessionStore {
         now,
         JSON.stringify(session),
         session.workflowOwnerId ?? null,
+        session.jobId ?? null,
       )
   }
 
@@ -60,7 +62,8 @@ export class SqliteSessionStore implements ISessionStore {
           current_state = ?,
           updated_at    = ?,
           data          = ?,
-          owner_id      = ?
+          owner_id      = ?,
+          job_id        = ?
         WHERE id = ? AND COALESCE(json_extract(data, '$.revision'), 0) = ?
       `)
       .run(
@@ -69,6 +72,7 @@ export class SqliteSessionStore implements ISessionStore {
         new Date().toISOString(),
         JSON.stringify(session),
         session.workflowOwnerId ?? null,
+        session.jobId ?? null,
         session.id,
         expectedRevision,
       )
@@ -94,9 +98,20 @@ export class SqliteSessionStore implements ISessionStore {
       sql += ' AND workflow_name = ?'
       params.push(opts.workflowName)
     }
+    if (opts.jobId !== undefined) {
+      sql += ' AND job_id = ?'
+      params.push(opts.jobId)
+    }
     sql += ' ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'
     params.push(opts.limit ?? -1, opts.offset ?? 0)
     const rows = this.db.prepare(sql).all(...params) as SessionRow[]
+    return rows.map(rowToSession)
+  }
+
+  async listByJob(jobId: string): Promise<Session[]> {
+    const rows = this.db
+      .prepare('SELECT data, updated_at FROM sessions WHERE job_id = ? ORDER BY created_at ASC, id ASC')
+      .all(jobId) as SessionRow[]
     return rows.map(rowToSession)
   }
 }

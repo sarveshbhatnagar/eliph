@@ -8,6 +8,7 @@ import { oauthRoutes } from './routes/oauth'
 import { marketplaceRoutes } from './routes/marketplace'
 import { proceduresRoutes } from './routes/procedures'
 import { sessionsRoutes } from './routes/sessions'
+import { jobsRoutes, registerJobSchemas } from './routes/jobs'
 
 export interface Stores {
   workflowStore: IWorkflowStore
@@ -99,6 +100,7 @@ export function registerSharedSchemas(app: FastifyInstance): void {
       to: { type: 'string' },
       action: { type: 'string' },
       note: { type: 'string' },
+      actor: { type: 'string', description: 'Who did it, when the request named an actor.' },
       at: { type: 'string', format: 'date-time' },
     },
     required: ['type', 'at'],
@@ -116,6 +118,8 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     isTerminal: { type: 'boolean', description: 'Whether the current state is terminal (workflow complete).' },
     nextTransitions: { type: 'array', items: { $ref: 'Transition#' }, description: 'Transitions available from the current state.' },
     pinned: { type: 'boolean', description: 'Present and true when the session runs against a snapshot of its procedure taken at creation (pin: true); absent otherwise.' },
+    jobId: { type: 'string', description: 'Present when the session is a run of a job (see POST /job): the id of that job.' },
+    label: { type: 'string', description: 'Present on a run of a job: the name of its piece of work, unique inside the job.' },
   }
   const sessionRequired = ['id', 'workflowName', 'currentState', 'history', 'createdAt']
 
@@ -133,6 +137,8 @@ export function registerSharedSchemas(app: FastifyInstance): void {
     properties: { ...sessionProperties, warnings: warningsSchema },
     required: sessionRequired,
   })
+
+  registerJobSchemas(app)
 
   app.addSchema({
     $id: 'ApiKey',
@@ -173,6 +179,7 @@ export function buildApp(stores: Stores): FastifyInstance {
   app.register(marketplaceRoutes(stores.workflowStore))
   app.register(proceduresRoutes(stores.workflowStore, stores.sessionStore, stores.apiKeyStore))
   app.register(sessionsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
+  app.register(jobsRoutes(stores.workflowStore, stores.sessionStore, stores.usageStore, stores.apiKeyStore))
 
   app.setErrorHandler((error, _req, reply) => {
     const status = (error as any).statusCode ?? 500

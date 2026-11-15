@@ -17,6 +17,8 @@ export interface IWorkflowStore {
 export interface SessionListOptions {
   /** Only sessions of this workflow (exact name). */
   workflowName?: string
+  /** Only sessions of this job. */
+  jobId?: string
   /** Maximum number of sessions to return. Omit for all. */
   limit?: number
   /** Number of sessions to skip (for paging). Default 0. */
@@ -36,6 +38,8 @@ export interface ISessionStore {
   findByState(workflowName: string, state: string): Promise<Session[]>
   /** Sessions whose workflowOwnerId is one of ownerIds, newest (createdAt) first. */
   list(ownerIds: string[], opts?: SessionListOptions): Promise<Session[]>
+  /** Every session of a job (any owner), oldest (createdAt) first, then by id. */
+  listByJob(jobId: string): Promise<Session[]>
 }
 
 export interface IOrgKeyStore {

@@ -37,7 +37,14 @@ export class InMemorySessionStore implements ISessionStore {
     const matching = Array.from(this.store.values())
       .filter(s => owners.has(s.workflowOwnerId))
       .filter(s => opts.workflowName === undefined || s.workflowName === opts.workflowName)
+      .filter(s => opts.jobId === undefined || s.jobId === opts.jobId)
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0))
     return opts.limit === undefined ? matching.slice(offset) : matching.slice(offset, offset + opts.limit)
+  }
+
+  async listByJob(jobId: string): Promise<Session[]> {
+    return Array.from(this.store.values())
+      .filter(s => s.jobId === jobId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   }
 }

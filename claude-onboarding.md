@@ -66,6 +66,35 @@ Once connected, Claude can:
 | Run a workflow | *"Start a session for the trade_evaluation workflow"* |
 | Advance through states | *"What's the next step in my session?"* |
 | Check session state | *"Where is session abc-123 right now?"* |
+| Run a workflow over many items | *"Review these five PRs with the code_review workflow, one run each"* |
+| Check a whole job | *"Is the review job done? Which runs are stuck?"* |
+
+### Jobs: the same workflow for many pieces of work
+
+A session is one run of a workflow. When several pieces of work each follow the same workflow (five PRs, twenty tickets), use a **job**: a group of sessions, one per piece of work, each with its own `label`. Parallel agents then never share a session.
+
+| Tool | Purpose |
+|---|---|
+| `create_job` | Create one run per item (`items: [{ label, data }]`). An item may carry `steps` to record work that already happened. |
+| `job_status` | Is the whole job done? Returns `done`, counts per state and where each run is. |
+| `advance_job` | Advance several runs in one call, by `label` or `session_id`. |
+| `delete_job` | Delete every run of a job. |
+| `export_workflow` | Turn a workflow into a Claude Code Workflow script that runs it over many items in parallel. |
+| `list_sessions` with `job_id` | List the runs of one job. |
+
+Each run is an ordinary session, so `advance`, `current_state` and the other session tools work on it by session id.
+
+**Running a workflow with parallel agents (Claude Code):**
+
+1. `export_workflow` returns a `script`, an `argsExample` and `notes` (read the notes: they list caveats).
+2. Pass the script to the Workflow tool with args `{ items: [{ label, data }] }`. It runs one agent per state, per item.
+3. When it returns, pass its result's `items` to `create_job` with the same workflow name. That one call records every run and checks each reported path against the workflow; a run whose path is refused gets an `error` and the others are unaffected. If the result has `batches` (more than 2000 steps in total), call `create_job` once per batch with the items it names.
+
+A workflow with probabilistic transitions, no `start` state, or a non-terminal state with no way out cannot be exported (`NOT_EXPORTABLE`).
+
+### When several agents work on the same session
+
+Pass `expected_state` (the state you believe the session is in) to `advance`, `reset_state` or a step of `advance_job`. If the session is somewhere else the call fails with `STATE_MISMATCH` and nothing changes, so a step two agents both report is applied only once. Pass `actor` to record who did a step in the session event log.
 
 ### Transition formats
 
@@ -91,6 +120,9 @@ Each API key has its own isolated procedure namespace. Make sure you're using th
 
 **"Session is already in terminal state"**
 The workflow has completed — no further advances are possible. Create a new session to run it again.
+
+**"Session ... is in state X, not Y (expected_state)"**
+Another agent already moved the session. Nothing was changed; call `current_state` (or `job_status`) to see where it is now and continue from there.
 
 **"requires a completed_action"**
 The current state has symbolic transitions. Call `next_transitions` to see valid action names, then advance with `completed_action: "action_name"`.

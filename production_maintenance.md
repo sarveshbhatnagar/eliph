@@ -252,3 +252,9 @@ pm2 start eliph-api  # manually re-arm after fixing
 | `POST` | `/session/:id/advance` | api key | Advance to next state |
 | `POST` | `/session/:id/reset` | api key | Reset to a target state |
 | `GET` | `/session/:id/requirements` | api key | Action requirements for current state |
+| `GET` | `/sessions` | api key | List sessions (`?workflow=`, `?active=`, `?limit=`, `?job=`) |
+| `POST` | `/job` | api key | Create a job: one session (run) per item, optionally with recorded steps |
+| `GET` | `/job/:id` | api key | Job summary: done, counts per state, runs |
+| `POST` | `/job/:id/advance` | api key | Advance several runs of a job |
+| `DELETE` | `/job/:id` | api key | Delete every run of a job |
+| `GET` | `/procedure/:name/workflow-script` | api key | Export a procedure as a workflow script |
