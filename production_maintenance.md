@@ -256,5 +256,6 @@ pm2 start eliph-api  # manually re-arm after fixing
 | `POST` | `/job` | api key | Create a job: one session (run) per item, optionally with recorded steps |
 | `GET` | `/job/:id` | api key | Job summary: done, counts per state, runs |
 | `POST` | `/job/:id/advance` | api key | Advance several runs of a job |
+| `POST` | `/job/:id/sync` | api key | Bring runs up to date with reported steps (repeatable) |
 | `DELETE` | `/job/:id` | api key | Delete every run of a job |
 | `GET` | `/procedure/:name/workflow-script` | api key | Export a procedure as a workflow script |

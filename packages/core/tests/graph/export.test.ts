@@ -643,3 +643,77 @@ describe('generated script: limits of the job API and of a workflow run', () => 
     replay(linear, nested.result.items[0])
   })
 })
+
+describe('exportWorkflowScript: live progress', () => {
+  const liveArgs = { job_id: 'job-123', items: [{ label: 'a' }, { label: 'b' }] }
+
+  it('is off by default: the script and its prompts never mention recording', async () => {
+    const exported = exportWorkflowScript(review)
+    expect(exported.script).toContain('const LIVE = false')
+    expect(exported.argsExample).toEqual({ items: expect.any(Array) })
+    const { result, calls } = await runScript(exported.script, { items: [{ label: 'a' }] }, { reviewing: [{ action: 'approved' }] })
+    expect(calls.every(c => !c.prompt.includes('sync_job'))).toBe(true)
+    expect(calls.every(c => c.opts.schema.properties.recorded === undefined)).toBe(true)
+    expect(result).not.toHaveProperty('job_id')
+    expect(result.items[0]).not.toHaveProperty('recorded')
+  })
+
+  it('says in notes and argsExample that the job is created first and synced at the end', () => {
+    const exported = exportWorkflowScript(review, { live: true })
+    expect(exported.script).toContain('const LIVE = true')
+    expect(exported.argsExample).toEqual({ job_id: expect.any(String), items: expect.any(Array) })
+    const notes = exported.notes.join('\n')
+    expect(notes).toContain('BEFORE running the script')
+    expect(notes).toContain('WITHOUT steps')
+    expect(notes).toContain('sync_job')
+    expect(notes).toContain('Do not call create_job again')
+  })
+
+  it('refuses to start without a job_id, before any agent runs', async () => {
+    const { script } = exportWorkflowScript(review, { live: true })
+    for (const args of [{ items: [{ label: 'a' }] }, { job_id: '  ', items: [{ label: 'a' }] }, [{ label: 'a' }]]) {
+      await expect(runScript(script, args, { reviewing: [{ action: 'approved' }] })).rejects.toThrow(/create_job/)
+    }
+  })
+
+  it('tells each agent how to record its step, with the job, the label and the earlier steps', async () => {
+    const { script } = exportWorkflowScript(review, { live: true })
+    const { result, calls } = await runScript(script, liveArgs, {
+      reviewing: (call, nth) => (call.opts.label.startsWith('a') && nth === 1
+        ? { action: 'changes_requested', note: 'needs work', recorded: true }
+        : { action: 'approved', note: 'fine', recorded: call.opts.label.startsWith('a') }),
+      fixing: [{ data: { commit: 'abc' }, note: 'fixed', recorded: true }],
+    })
+    const first = calls.find(c => c.opts.label === 'a: reviewing')!
+    expect(first.prompt).toContain('"sync_job"')
+    expect(first.prompt).toContain('- job_id: "job-123"')
+    expect(first.prompt).toContain('{ "label": "a", "steps": [')
+    // "start" has no description and one exit, so it ran without an agent: the first agent must copy that empty step
+    expect(first.prompt).toContain('\n[{}]\n')
+    expect(first.opts.schema.properties.recorded).toEqual({ type: 'boolean' })
+    expect(first.opts.schema.required).not.toContain('recorded')
+
+    // The second review of "a" is given every earlier step, exactly as the result reports them
+    const second = calls.filter(c => c.opts.label === 'a: reviewing')[1]
+    const a = result.items.find(i => i.label === 'a')!
+    expect(second.prompt).toContain('\n' + JSON.stringify(a.steps.slice(0, 3)) + '\n')
+
+    expect(result).toMatchObject({ workflow: 'review', job_id: 'job-123', next: expect.stringContaining('sync_job') })
+    expect((a as any).recorded).toBe(3)
+    expect((result.items.find(i => i.label === 'b') as any).recorded).toBe(0)
+    for (const item of result.items) replay(review, item)
+  })
+
+  it('keeps hostile text out of the code in live mode too', async () => {
+    const hostile = buildGraph({
+      name: 'x',
+      description: 'd',
+      transitions: ['start -> end'],
+      states: { start: { description: 'a `${process.exit(1)}` </script> "quoted"\nline' } },
+    })
+    const { script } = exportWorkflowScript(hostile, { live: true })
+    const { result, calls } = await runScript(script, { job_id: 'j"\n`${1}`', items: [{ label: 'l"`${2}`' }] }, { start: [{ recorded: false }] })
+    expect(calls[0].prompt).toContain('- job_id: ' + JSON.stringify('j"\n`${1}`'))
+    expect(result.items[0].finalState).toBe('end')
+  })
+})

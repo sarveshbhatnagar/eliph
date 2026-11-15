@@ -160,9 +160,9 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     description: 'Turn a procedure into a Claude Code Workflow script that runs it over many items in parallel (one run per item, one agent per state). Use it when the same procedure has to be carried out for several pieces of work at once (several PRs, tickets, files).\n' +
       'How to use it: 1) call export_workflow; 2) pass the returned "script" to the Workflow tool with args { items: [{ label, data }] } ("argsExample" shows the shape; label is a unique name for the piece of work, data is what its agents need to know); 3) when the workflow returns, pass its result\'s "items" unchanged to create_job with the same workflow_name. That one call records every run in eliph and checks each reported path against the procedure. If the result has "batches" (more than 2000 steps in total, see its "warning"), call create_job once per batch instead, each with the items whose labels the batch lists.\n' +
       'Limits: at most 200 items, and one workflow run can make at most 1000 agent calls in total, so a procedure with many states fits fewer items per run ("notes" says how many); the script refuses a batch that cannot fit before any agent starts.\n' +
-      'The script does not talk to eliph while it runs, so nothing is recorded until step 3. Always read "notes": they list caveats of this export (loops and the step limit, states that run without an agent, states with no description).\n' +
+      'The script does not talk to eliph while it runs, so nothing is recorded until step 3. For LIVE PROGRESS pass live: true instead: 1) create the job first with create_job (items WITHOUT steps); 2) run the script with args { job_id, items }; its agents then record each step with sync_job as they finish it, so job_status shows where every run is while the workflow is still going; 3) when it returns, call sync_job once with its result\'s "job_id" and "items" (not create_job) to add anything an agent failed to record. Live costs one extra tool call per step. Always read "notes": they list caveats of this export (loops and the step limit, states that run without an agent, states with no description).\n' +
       'Returns { workflow, script, argsExample, notes }. Fails with NOT_EXPORTABLE, naming the cause, when the procedure has a probabilistic transition (a script cannot pick an exit at random; make it symbolic), has no "start" state, or has a reachable non-terminal state with no way out (add a transition or mark it terminal).',
-    inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' }, max_steps: { type: 'integer', minimum: 1, maximum: 200, description: 'Optional. Most steps one item may take before the script stops it (default 25, max 200). Only matters for procedures with loops; raise it if a legitimate run needs more.' } } },
+    inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' }, max_steps: { type: 'integer', minimum: 1, maximum: 200, description: 'Optional. Most steps one item may take before the script stops it (default 25, max 200). Only matters for procedures with loops; raise it if a legitimate run needs more.' }, live: { type: 'boolean', description: 'Optional, default false. true: the script\'s agents record each step in eliph as they finish it (create the job first and pass its job_id in args; finish with sync_job).' } } },
   },
   create_job: {
     description: 'Create a job: a group of eliph sessions ("runs") of the SAME procedure, one per piece of work. Use it instead of create_session when several pieces of work each follow the same procedure (e.g. five PRs to review), especially when different agents handle them in parallel: every piece of work gets its own run, so agents never share or overwrite each other\'s position. Each item needs a "label" (the name of the piece of work, unique inside the job, max 200 characters) and may carry initial "data". At most 200 items.\n' +
@@ -229,6 +229,42 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
           },
         },
         actor: actorProp,
+      },
+    },
+  },
+  sync_job: {
+    description: 'Bring runs of a job up to date with the steps reported for them. For each item give the run\'s "label" and "steps": the WHOLE path of that run from the start, in order ({ completed_action?, data?, note? } each). Steps the run has already taken are skipped and only the rest are applied, with the same rules as advance(), so calling it again with the same or a longer list is safe and never applies a step twice.\n' +
+      'Use it (a) from inside a live workflow script, when your instructions tell you to record your step, and (b) once after a live export_workflow script returns, with its result\'s "job_id" and "items", to add any step that was not recorded while it ran. For a job that was not created beforehand use create_job with steps instead.\n' +
+      'Returns the job summary { jobId, workflow, total, done, counts, runs } plus "results": [{ label, id, ok, currentState, skipped, applied, error? }] one per item. ok is true when the run now holds every reported step. A run whose own path differs from the reported steps is left untouched with error code DIVERGED; a label the job does not have gets NOT_FOUND; a refused step stops that run with the same codes as advance() and "atStep" (from 0). Problems with one item do not affect the others. At most 200 items and 2000 steps per call.',
+    inputSchema: {
+      type: 'object',
+      required: ['job_id', 'items'],
+      properties: {
+        job_id: { type: 'string', description: 'The jobId returned by create_job.' },
+        items: {
+          type: 'array',
+          description: 'One entry per run to bring up to date.',
+          items: {
+            type: 'object',
+            required: ['label', 'steps'],
+            properties: {
+              label: { type: 'string', description: 'The label of the run.' },
+              steps: {
+                type: 'array',
+                description: 'Every step of the run so far, in order, from the start.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    completed_action: { type: 'string', description: 'The action that was completed; omit for a step with no action.' },
+                    data: { type: 'object', additionalProperties: true, description: 'Data the step produced.' },
+                    note: { type: 'string', description: 'What was done.' },
+                  },
+                },
+              },
+            },
+          },
+        },
+        actor: { type: 'string', maxLength: 200, description: 'Optional. Who is recording the steps.' },
       },
     },
   },

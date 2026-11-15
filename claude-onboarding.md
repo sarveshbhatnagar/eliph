@@ -80,6 +80,7 @@ A session is one run of a workflow. When several pieces of work each follow the 
 | `advance_job` | Advance several runs in one call, by `label` or `session_id`. |
 | `delete_job` | Delete every run of a job. |
 | `export_workflow` | Turn a workflow into a Claude Code Workflow script that runs it over many items in parallel. |
+| `sync_job` | Bring runs of a job up to date with reported steps; already recorded steps are skipped, so it is safe to repeat. |
 | `list_sessions` with `job_id` | List the runs of one job. |
 
 Each run is an ordinary session, so `advance`, `current_state` and the other session tools work on it by session id.
@@ -89,6 +90,8 @@ Each run is an ordinary session, so `advance`, `current_state` and the other ses
 1. `export_workflow` returns a `script`, an `argsExample` and `notes` (read the notes: they list caveats).
 2. Pass the script to the Workflow tool with args `{ items: [{ label, data }] }`. It runs one agent per state, per item.
 3. When it returns, pass its result's `items` to `create_job` with the same workflow name. That one call records every run and checks each reported path against the workflow; a run whose path is refused gets an `error` and the others are unaffected. If the result has `batches` (more than 2000 steps in total), call `create_job` once per batch with the items it names.
+
+**Live progress.** By default nothing is recorded until step 3. To watch a run while it is going, call `export_workflow` with `live: true` and change the steps: first `create_job` with the items (no steps), then run the script with args `{ job_id, items }`, and when it returns call `sync_job` with its result's `job_id` and `items` (not `create_job`). The script's agents record each step with `sync_job` as they finish it, so `job_status` shows where every run is. `sync_job` skips steps that are already recorded, so the final call only adds what an agent failed to record. Live mode costs one extra tool call per step.
 
 A workflow with probabilistic transitions, no `start` state, or a non-terminal state with no way out cannot be exported (`NOT_EXPORTABLE`).
 

@@ -398,13 +398,14 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       reply.send(computeProcedureStats(graph.name, graph, sessions.slice(0, STATS_MAX_SESSIONS), truncated))
     })
 
-    app.get<{ Params: { name: string }; Querystring: { max_steps?: number } }>('/procedure/:name/workflow-script', {
+    app.get<{ Params: { name: string }; Querystring: { max_steps?: number; live?: boolean } }>('/procedure/:name/workflow-script', {
       schema: {
         tags: ['Procedures'],
         summary: 'Export a procedure as a workflow script',
         description: 'Turns the procedure into a plain-JavaScript workflow script that runs it once per item with parallel agents, without talking '
           + 'to this API. The script returns `items` (label, data, steps) in the shape POST /job accepts, so a finished script run is reported with '
-          + 'one call. `argsExample` shows the input the script expects and `notes` lists caveats of this export. A procedure that cannot be '
+          + 'one call. With `live=true` the agents of the script also record each step as they finish it, into a job created beforehand, and the '
+          + 'result is sent to POST /job/{id}/sync at the end (see `notes`). `argsExample` shows the input the script expects and `notes` lists caveats of this export. A procedure that cannot be '
           + 'exported (a probabilistic transition, no "start" state, a reachable non-terminal state with no exits) answers 400 NOT_EXPORTABLE.',
         security: authed,
         params: nameParams,
@@ -415,6 +416,10 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
               type: 'integer',
               description: `Optional. Most steps one item may take before the script stops it (default ${WORKFLOW_EXPORT_STEPS.default}; `
                 + `values outside ${WORKFLOW_EXPORT_STEPS.min}-${WORKFLOW_EXPORT_STEPS.max} are brought into that range). Bounds loops.`,
+            },
+            live: {
+              type: 'boolean',
+              description: 'Optional, default false. true: progress is recorded in Eliph while the script runs (its agents call sync_job after each step).',
             },
           },
         },
@@ -435,7 +440,7 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       const graph = await workflowStore.get(req.params.name, requestOwnerId(req))
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
       try {
-        reply.send({ workflow: graph.name, ...exportWorkflowScript(graph, { maxSteps: req.query.max_steps }) })
+        reply.send({ workflow: graph.name, ...exportWorkflowScript(graph, { maxSteps: req.query.max_steps, live: req.query.live === true }) })
       } catch (e) {
         if (e instanceof WorkflowExportError) return reply.code(400).send({ error: e.message, code: e.code })
         throw e
