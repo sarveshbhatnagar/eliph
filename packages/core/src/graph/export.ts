@@ -592,6 +592,10 @@ function buildPrompt(item, run, state, exits, symbolic, deterministic, retry) {
       + retry.missing.map(k => JSON.stringify(k)).join(', ') + '. Finish whatever is needed to know '
       + (retry.missing.length === 1 ? 'it' : 'them') + ' and report again with ' + (retry.missing.length === 1 ? 'that key' : 'those keys')
       + ' filled in under "data". This is the last attempt.')
+    if (LIVE) {
+      lines.push('For the sync_job call of this attempt, the "data" of YOUR STEP must hold every data key of this step: the ones already reported (JSON below) together with the missing ones.')
+      lines.push(JSON.stringify(retry.reported || {}))
+    }
   }
   return lines.join('\n')
 }
@@ -650,7 +654,7 @@ async function runItem(item) {
 
       let missing = missingFor(exit, run.data)
       if (missing.length > 0) {
-        const second = await callAgent(buildPrompt(item, run, state, exits, symbolic, deterministic, { exit: exit, missing: missing }), options)
+        const second = await callAgent(buildPrompt(item, run, state, exits, symbolic, deterministic, { exit: exit, missing: missing, reported: returned }), options)
         if (!isObject(second)) {
           error = 'The agent for state ' + JSON.stringify(run.state) + ' returned nothing when asked again for required data ('
             + missing.join(', ') + ').'

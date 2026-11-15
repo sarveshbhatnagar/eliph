@@ -704,6 +704,23 @@ describe('exportWorkflowScript: live progress', () => {
     for (const item of result.items) replay(review, item)
   })
 
+  it('asks a retried agent to record all the data of its step, not only the missing key', async () => {
+    const { script } = exportWorkflowScript(withRequires, { live: true })
+    const { result, calls } = await runScript(script, { job_id: 'j', items: [{ label: 'a' }] }, {
+      start: [{ recorded: true }],
+      coding: [{ action: 'opened', data: { branch: 'x' }, recorded: false }, { action: 'opened', data: { pr_url: 'u' }, recorded: true }],
+    })
+    const retry = calls.filter(c => c.opts.label === 'a: coding')[1]
+    expect(retry.prompt).toContain('must hold every data key of this step')
+    expect(retry.prompt).toContain('\n{"branch":"x"}')
+    expect(result.items[0].steps[1]).toMatchObject({ completed_action: 'opened', data: { branch: 'x', pr_url: 'u' } })
+    // Without live progress the retry prompt is as before
+    const plain = await runScript(exportWorkflowScript(withRequires).script, { items: [{ label: 'a' }] }, {
+      start: [{}], coding: [{ action: 'opened' }, { action: 'opened', data: { pr_url: 'u' } }],
+    })
+    expect(plain.calls.every(c => !c.prompt.includes('must hold every data key'))).toBe(true)
+  })
+
   it('keeps hostile text out of the code in live mode too', async () => {
     const hostile = buildGraph({
       name: 'x',

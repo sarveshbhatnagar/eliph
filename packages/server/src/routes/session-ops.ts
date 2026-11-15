@@ -17,6 +17,9 @@ export type Caller = Pick<FastifyRequest, 'authContext'>
 
 export const NOT_FOUND = { error: 'Not found', code: 'NOT_FOUND' }
 
+/** Internal code of an advance refused because the run no longer has the number of steps the caller compared against. */
+export const POSITION_MISMATCH = 'POSITION_MISMATCH'
+
 /** Longest `actor` accepted on a step. */
 export const ACTOR_MAX_LENGTH = 200
 
@@ -292,8 +295,20 @@ export function sessionOps(workflowStore: IWorkflowStore, sessionStore: ISession
   }
 
   /** Advance one session the caller may access (within `jobId` when given). */
-  async function advance(req: Caller, id: string, input: StepInput, jobId?: string): Promise<OpResult> {
-    const result = await write(req, id, input, jobId, advanceOnce)
+  /**
+   * `expectedSteps` (sync only; never taken from a request body): the advance
+   * happens only while the run has taken exactly that many steps. A state can
+   * be visited again in a loop, so the state alone does not say whether a
+   * reported step was already recorded; the number of steps taken does.
+   */
+  async function advance(req: Caller, id: string, input: StepInput, jobId?: string, expectedSteps?: number): Promise<OpResult> {
+    const once = expectedSteps === undefined ? advanceOnce : (session: Session, graph: WorkflowGraph, step: StepInput): OpResult => {
+      if (session.history.length - 1 !== expectedSteps) {
+        return { ok: false, status: 409, body: { error: 'The run was changed by another request.', code: POSITION_MISMATCH }, session }
+      }
+      return advanceOnce(session, graph, step)
+    }
+    const result = await write(req, id, input, jobId, once)
     if (result.ok) recordUsage(req, usageStore, 'advance')
     return result
   }

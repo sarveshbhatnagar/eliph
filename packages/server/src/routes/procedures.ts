@@ -402,8 +402,8 @@ export function proceduresRoutes(workflowStore: IWorkflowStore, sessionStore: IS
       schema: {
         tags: ['Procedures'],
         summary: 'Export a procedure as a workflow script',
-        description: 'Turns the procedure into a plain-JavaScript workflow script that runs it once per item with parallel agents, without talking '
-          + 'to this API. The script returns `items` (label, data, steps) in the shape POST /job accepts, so a finished script run is reported with '
+        description: 'Turns the procedure into a plain-JavaScript workflow script that runs it once per item with parallel agents. By default nothing '
+          + 'talks to this API while it runs. The script returns `items` (label, data, steps) in the shape POST /job accepts, so a finished script run is reported with '
           + 'one call. With `live=true` the agents of the script also record each step as they finish it, into a job created beforehand, and the '
           + 'result is sent to POST /job/{id}/sync at the end (see `notes`). `argsExample` shows the input the script expects and `notes` lists caveats of this export. A procedure that cannot be '
           + 'exported (a probabilistic transition, no "start" state, a reachable non-terminal state with no exits) answers 400 NOT_EXPORTABLE.',
