@@ -144,6 +144,65 @@ describe('POST /job/:id/sync', () => {
     expect(applied).toBe(2)
   })
 
+  it('never records a step twice in a loop, however many reports race', async () => {
+    const ctx = await setup()
+    const defined = await ctx.app.inject({
+      method: 'PUT', url: '/procedure/loop', headers: ctx.headers,
+      payload: { description: 'd', transitions: ['start -> work', 'work -retry-> work', 'work -done-> end', 'start -go-> mid', 'mid -back-> start'] },
+    })
+    expect(defined.statusCode).toBe(201)
+    const job = (await ctx.app.inject({ method: 'POST', url: '/job', headers: ctx.headers, payload: { workflow: 'loop', items: [{ label: 'a' }, { label: 'b' }, { label: 'filler' }] } })).json()
+
+    // Self-loop: the run is in "work" before and after the reported step, so the state alone cannot tell
+    await sync(ctx, job.jobId, [{ label: 'a', steps: [{}] }])
+    const selfLoop = [{}, { completed_action: 'retry' }]
+    const replies = await Promise.all(Array.from({ length: 8 }, () => sync(ctx, job.jobId, [{ label: 'a', steps: selfLoop }])))
+    for (const r of replies) expect(r.json().results[0]).toMatchObject({ ok: true, currentState: 'work' })
+    expect(replies.reduce((n, r) => n + r.json().results[0].applied, 0)).toBe(1)
+    expect((await session(ctx, job.runs[0].id)).history).toEqual(['start', 'work', 'work'])
+
+    // Cycle: one request is still busy with another item while a second one completes the same report
+    const cycle = [{ completed_action: 'go' }, { completed_action: 'back' }, { completed_action: 'go' }]
+    const [x, y] = await Promise.all([
+      sync(ctx, job.jobId, [{ label: 'b', steps: cycle }]),
+      sync(ctx, job.jobId, [{ label: 'filler', steps: [{}, { completed_action: 'retry' }, { completed_action: 'retry' }] }, { label: 'b', steps: cycle }]),
+    ])
+    expect(x.json().results[0]).toMatchObject({ ok: true, currentState: 'mid' })
+    expect(y.json().results[1]).toMatchObject({ ok: true, currentState: 'mid' })
+    expect(x.json().results[0].applied + y.json().results[1].applied).toBe(3)
+    expect((await session(ctx, job.runs[1].id)).history).toEqual(['start', 'mid', 'start', 'mid'])
+  })
+
+  it('carries data reported on an already taken step into the next step, so required data is not lost', async () => {
+    const ctx = await setup()
+    await ctx.app.inject({
+      method: 'PUT', url: '/procedure/two', headers: ctx.headers,
+      payload: { description: 'd', transitions: [{ transition: 'start -> mid', requires: ['b'] }, { transition: 'mid -> end', requires: ['a'] }] },
+    })
+    const job = (await ctx.app.inject({ method: 'POST', url: '/job', headers: ctx.headers, payload: { workflow: 'two', items: [{ label: 'r' }] } })).json()
+    // A first attempt is refused, the retry reports only the missing key
+    const refused = await sync(ctx, job.jobId, [{ label: 'r', steps: [{ data: { a: '1' } }] }])
+    expect(refused.json().results[0]).toMatchObject({ ok: false, error: { code: 'MISSING_REQUIRED_DATA', missing: ['b'] } })
+    await sync(ctx, job.jobId, [{ label: 'r', steps: [{ data: { b: '2' } }] }])
+    expect((await session(ctx, job.runs[0].id)).data).toEqual({ b: '2' })
+    // The full report holds both keys on step 1; step 2 needs "a"
+    const full = await sync(ctx, job.jobId, [{ label: 'r', steps: [{ data: { a: '1', b: 'changed' } }, {}] }])
+    expect(full.json().results[0]).toEqual({ label: 'r', id: job.runs[0].id, ok: true, currentState: 'end', skipped: 1, applied: 1 })
+    // Data the run already holds is not overwritten by a skipped step
+    expect((await session(ctx, job.runs[0].id)).data).toEqual({ a: '1', b: '2' })
+  })
+
+  it('does not take a step count from the request body of the single-session advance', async () => {
+    const ctx = await setup()
+    const job = await createJob(ctx, ['a'])
+    const res = await ctx.app.inject({
+      method: 'POST', url: `/session/${job.runs[0].id}/advance`, headers: ctx.headers,
+      payload: { completed_action: 'go', expectedSteps: 7, expected_steps: 7 },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().currentState).toBe('mid')
+  })
+
   it('rejects an unusable request without changing anything', async () => {
     const ctx = await setup()
     const job = await createJob(ctx, ['a'])
@@ -152,6 +211,8 @@ describe('POST /job/:id/sync', () => {
       expect(res.statusCode).toBe(400)
       expect(res.json().code).toBe('BAD_REQUEST')
     }
+    const longLabel = await sync(ctx, job.jobId, [{ label: 'x'.repeat(201), steps: [] }])
+    expect(longLabel.statusCode).toBe(400)
     const tooMany = await sync(ctx, job.jobId, [{ label: 'a', steps: Array.from({ length: 2001 }, () => ({})) }])
     expect(tooMany.statusCode).toBe(400)
     expect((await session(ctx, job.runs[0].id)).history).toEqual(['start'])

@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
 import { IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, graphWarnings } from '@eliph/core'
 import { requestOwnerId, canAccessSession } from '../middleware/auth'
-import { Caller, ErrorBody, NOT_FOUND, advanceOnce, buildSession, graphFor, initialData, recordUsage, sessionOps } from './session-ops'
+import { Caller, ErrorBody, NOT_FOUND, POSITION_MISMATCH, advanceOnce, buildSession, graphFor, initialData, recordUsage, sessionOps } from './session-ops'
 import { actorBody, dataBody, expectedStateBody, noteBody } from './sessions'
 
 const authed = [{ BearerAuth: [] }]
@@ -240,6 +240,79 @@ export function jobsRoutes(workflowStore: IWorkflowStore, sessionStore: ISession
       })
     }
     return { jobId, workflow: runs[0].workflowName, total: runs.length, done, counts: Object.fromEntries(counts), runs: rows }
+  }
+
+  /** How often a run is compared again after another request changed it under a sync. */
+  const SYNC_ATTEMPTS = 5
+
+  /**
+   * Brings one run up to date with its reported steps. The run is read afresh
+   * and compared on every attempt, and each step is applied only while the run
+   * has taken exactly the steps before it, so a report arriving twice at once,
+   * or a loop that returns to the same state, never records a step twice. When
+   * another request moves the run in between, it is compared again.
+   */
+  async function syncRun(req: Caller, jobId: string, accessible: Session, label: string, steps: JobStep[], actor: string | undefined) {
+    let lost = false
+    for (let attempt = 0; attempt < SYNC_ATTEMPTS; attempt++) {
+      // `accessible` passed the access check; only its current content is read again
+      const run = await sessionStore.get(accessible.id)
+      if (!run || run.jobId !== jobId) {
+        return { label, ok: false, error: { message: `This job has no run for label ${JSON.stringify(label)}.`, code: 'NOT_FOUND' } }
+      }
+      const graph = await graphFor(workflowStore, run)
+      if (!graph) {
+        return { label, id: run.id, ok: false, currentState: run.currentState, error: { message: 'The procedure of this run no longer exists.', code: 'NOT_FOUND' } }
+      }
+      const compared = compareWithReport(graph, run.history, steps)
+      if (compared.diverged) {
+        return {
+          label, id: run.id, ok: false, currentState: run.currentState, skipped: 0, applied: 0,
+          error: {
+            message: `The run took a different path (${run.history.join(' -> ')}) than the reported steps from step ${compared.atStep + 1} on `
+              + '(a run that was reset, or advanced by someone else, no longer matches a report made from "start"). Nothing was changed.',
+            code: 'DIVERGED',
+            atStep: compared.atStep,
+          },
+        }
+      }
+      // Data reported on steps the run already took but does not hold (for example from a first attempt
+      // that was refused) is carried by the first step applied now, so later required-data checks see it
+      let carried: Record<string, unknown> | undefined
+      for (const step of steps.slice(0, compared.skip)) {
+        for (const [key, value] of Object.entries(step.data ?? {})) {
+          const held = run.data !== undefined && Object.prototype.hasOwnProperty.call(run.data, key) && run.data[key] !== null
+          if (!held && value !== null && value !== undefined) (carried ??= {})[key] = value
+        }
+      }
+      let currentState = run.currentState
+      let applied = 0
+      let error: (RunError & { atStep: number }) | undefined
+      lost = false
+      for (let n = compared.skip; n < steps.length; n++) {
+        await yieldToEventLoop()
+        const step = steps[n]
+        const data = carried ? { ...carried, ...(step.data ?? {}) } : step.data
+        const result = await ops.advance(req, run.id, {
+          completed_action: step.completed_action, expected_state: compared.states[n], data, note: step.note, actor,
+        }, jobId, n)
+        if (!result.ok) {
+          if (result.body.code === POSITION_MISMATCH) { lost = true; break }
+          if (result.session) currentState = result.session.currentState
+          error = { ...runError(result.body), atStep: n }
+          break
+        }
+        carried = undefined
+        currentState = result.session.currentState
+        applied++
+      }
+      if (lost) continue
+      return { label, id: run.id, ok: !error, currentState, skipped: compared.skip, applied, ...(error ? { error } : {}) }
+    }
+    return {
+      label, id: accessible.id, ok: false,
+      error: { message: 'The run kept being changed by other requests while it was compared. Nothing more was applied; repeat the sync.', code: 'CONFLICT' },
+    }
   }
 
   return async (app: FastifyInstance) => {
@@ -548,6 +621,7 @@ export function jobsRoutes(workflowStore: IWorkflowStore, sessionStore: ISession
       let total = 0
       for (const [i, item] of items.entries()) {
         if (typeof item.label !== 'string' || item.label === '') return reply.code(400).send(badRequest(`Item ${i + 1} has no label.`))
+        if (item.label.length > JOB_LIMITS.maxLabelLength) return reply.code(400).send(badRequest(`The label of item ${i + 1} is longer than ${JOB_LIMITS.maxLabelLength} characters.`))
         if (seen.has(item.label)) return reply.code(400).send(badRequest(`Label ${JSON.stringify(item.label)} is used more than once.`))
         seen.add(item.label)
         total += item.steps?.length ?? 0
@@ -570,43 +644,7 @@ export function jobsRoutes(workflowStore: IWorkflowStore, sessionStore: ISession
           results.push({ label: item.label, ok: false, error: { message: `This job has no run for label ${JSON.stringify(item.label)}.`, code: 'NOT_FOUND' } })
           continue
         }
-        const graph = await graphFor(workflowStore, run)
-        if (!graph) {
-          results.push({ label: item.label, id: run.id, ok: false, currentState: run.currentState, error: { message: 'The procedure of this run no longer exists.', code: 'NOT_FOUND' } })
-          continue
-        }
-        const compared = compareWithReport(graph, run.history, steps)
-        if (compared.diverged) {
-          results.push({
-            label: item.label, id: run.id, ok: false, currentState: run.currentState, skipped: 0, applied: 0,
-            error: {
-              message: `The run took a different path (${run.history.join(' -> ')}) than the reported steps from step ${compared.atStep + 1} on. Nothing was changed.`,
-              code: 'DIVERGED',
-              atStep: compared.atStep,
-            },
-          })
-          continue
-        }
-        let currentState = run.currentState
-        let applied = 0
-        let error: (RunError & { atStep: number }) | undefined
-        for (let n = compared.skip; n < steps.length; n++) {
-          await yieldToEventLoop()
-          const step = steps[n]
-          // Taken only from the state the report says it starts in, so a step another caller
-          // records at the same moment is never applied twice
-          const result = await ops.advance(req, run.id, {
-            completed_action: step.completed_action, expected_state: compared.states[n], data: step.data, note: step.note, actor,
-          }, jobId)
-          if (!result.ok) {
-            if (result.session) currentState = result.session.currentState
-            error = { ...runError(result.body), atStep: n }
-            break
-          }
-          currentState = result.session.currentState
-          applied++
-        }
-        results.push({ label: item.label, id: run.id, ok: !error, currentState, skipped: compared.skip, applied, ...(error ? { error } : {}) })
+        results.push(await syncRun(req, jobId, run, item.label, steps, actor))
       }
       const after = await accessibleRuns(req, jobId)
       const summary = after.length > 0
