@@ -234,7 +234,7 @@ describe('session data, notes and listing', () => {
     expect((toolMeta.update_session_data.inputSchema as any).required).toEqual(['session_id', 'data'])
     const list = toolMeta.list_sessions.inputSchema as any
     expect(list.required).toBeUndefined()
-    expect(Object.keys(list.properties)).toEqual(['workflow_name', 'active', 'limit'])
+    expect(Object.keys(list.properties)).toEqual(['workflow_name', 'active', 'limit', 'job_id'])
   })
 
   it.each(['create_session', 'advance', 'reset_state', 'current_state'])('%s description says the response has the step context', (name) => {

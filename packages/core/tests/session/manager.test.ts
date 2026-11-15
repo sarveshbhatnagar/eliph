@@ -80,3 +80,22 @@ describe('applyReset', () => {
     expect(updated.currentState).toBe('review')
   })
 })
+
+describe('actor on advance and reset events', () => {
+  it('records the actor when given', () => {
+    const advanced = applyAdvance(makeSession(), 'review', { actor: 'worker-1', action: 'submit' })
+    expect(advanced.events![advanced.events!.length - 1]).toMatchObject({ type: 'advance', actor: 'worker-1', action: 'submit' })
+    const reset = applyReset(advanced, 'start', { actor: 'lead' })
+    expect(reset.events![reset.events!.length - 1]).toMatchObject({ type: 'reset', actor: 'lead' })
+  })
+
+  it('leaves the actor off the event when not given', () => {
+    const advanced = applyAdvance(makeSession(), 'review')
+    expect('actor' in advanced.events![advanced.events!.length - 1]).toBe(false)
+  })
+
+  it('keeps jobId and label across steps', () => {
+    const session = { ...makeSession(), jobId: 'job-1', label: 'part-a' }
+    expect(applyAdvance(session, 'review')).toMatchObject({ jobId: 'job-1', label: 'part-a' })
+  })
+})

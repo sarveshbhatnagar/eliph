@@ -1,17 +1,19 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import {
   IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions,
-  applyAdvance, applyReset, applyDataPatch, mergeSessionData, requirements, graphWarnings, hasState, SessionDataError, SESSION_NOTE_MAX_LENGTH,
-  sessionRevision, chooseTransition, assertRequiredData, RequiredDataError,
+  applyDataPatch, requirements, graphWarnings, SessionDataError, SESSION_NOTE_MAX_LENGTH,
 } from '@eliph/core'
-import { randomUUID } from 'crypto'
 import { requestOwnerId, canAccessSession, sessionOwnerIdsForListing } from '../middleware/auth'
+import {
+  ACTOR_MAX_LENGTH, OpFailure, OpResult, RETRY, buildSession, dataFailure, graphFor, initialData, pinnedFlag, recordUsage,
+  sessionOps, sessionResponse, stepContext, withWriteRetries,
+} from './session-ops'
+
+export { SESSION_WRITE_ATTEMPTS } from './session-ops'
 
 const authed = [{ BearerAuth: [] }]
 
 type AuthedRequest = Pick<FastifyRequest, 'authContext'> & { params: { id: string } }
-
-const NOT_FOUND = { error: 'Not found', code: 'NOT_FOUND' }
 
 const idParams = {
   type: 'object',
@@ -23,13 +25,13 @@ const optionalWorkflowQuery = {
   properties: { workflow: { type: 'string', description: 'Optional. Defaults to the session\'s workflow; must match it if supplied.' } },
 }
 
-const dataBody = {
+export const dataBody = {
   type: 'object',
   additionalProperties: true,
   description: 'Optional. Shallow-merged into the session data; a key set to null removes it. The merged data may be at most 64 KB serialized.',
 }
 
-const noteBody = {
+export const noteBody = {
   type: 'string',
   maxLength: SESSION_NOTE_MAX_LENGTH,
   description: `Optional note recorded in the session's event log (max ${SESSION_NOTE_MAX_LENGTH} characters).`,
@@ -37,37 +39,6 @@ const noteBody = {
 
 const LIST_DEFAULT_LIMIT = 50
 const LIST_MAX_LIMIT = 200
-
-/** Description, terminal flag and outgoing transitions of a session's current state. */
-function stepContext(graph: WorkflowGraph | null, stateName: string) {
-  const state = graph?.states[stateName]
-  return {
-    stateDescription: state?.description ?? null,
-    isTerminal: state?.isTerminal ?? false,
-    nextTransitions: graph ? getNextTransitions(graph, stateName) : [],
-  }
-}
-
-/** `{ pinned: true }` for a pinned session, nothing otherwise (unpinned responses are unchanged). */
-function pinnedFlag(session: Session): { pinned?: true } {
-  return session.pinnedGraph ? { pinned: true } : {}
-}
-
-/** A session response: the session, its full data, and the step context of its current state. */
-function sessionResponse(session: Session, graph: WorkflowGraph | null) {
-  // The graph snapshot and the concurrency counter are internal
-  const { pinnedGraph: _pinnedGraph, revision: _revision, ...rest } = session
-  return { ...rest, data: session.data ?? {}, ...pinnedFlag(session), ...stepContext(graph, session.currentState) }
-}
-
-/** The graph a session runs against: its pinned snapshot, or else the live procedure. */
-function graphFor(workflowStore: IWorkflowStore, session: Session): Promise<WorkflowGraph | null> {
-  if (session.pinnedGraph) return Promise.resolve(session.pinnedGraph)
-  return workflowStore.get(session.workflowName, session.workflowOwnerId)
-}
-
-/** How many times a read-modify-write is attempted before answering 409. */
-export const SESSION_WRITE_ATTEMPTS = 10
 
 /** Declared 409 response of the session write routes (see withWriteRetries). */
 const conflictResponse = {
@@ -77,88 +48,68 @@ const conflictResponse = {
   required: ['error', 'code'],
 }
 
+/**
+ * Declared 409 response of advance and reset, which can also refuse an
+ * expected_state. `currentState` is let through as an additional property so
+ * the declared properties stay those of conflictResponse.
+ */
+const stepConflictResponse = {
+  type: 'object',
+  description: 'CONFLICT: concurrent writes to the session kept winning; retry the request. '
+    + 'STATE_MISMATCH: `expected_state` was given and the session is in another state, named in the extra field `currentState`; do not retry blindly. '
+    + 'Either way nothing was changed by this request.',
+  properties: { error: { type: 'string' }, code: { type: 'string', enum: ['CONFLICT', 'STATE_MISMATCH'] } },
+  required: ['error', 'code'],
+  additionalProperties: true,
+}
+
 /** One sentence for the description of every route that can answer conflictResponse. */
 const CONFLICT_NOTE = ' If the session keeps being changed by concurrent requests the response is 409 CONFLICT and nothing was changed; retry the request.'
 
-const WRITE_CONFLICT = {
-  error: 'The session was changed by other requests at the same time and this change could not be applied. Nothing was changed by this request; retry it.',
-  code: 'CONFLICT',
+/** One sentence for the description of the routes that accept expected_state. */
+const EXPECTED_STATE_NOTE = ' With `expected_state` the step only happens while the session is in that state; otherwise the response is 409 '
+  + 'STATE_MISMATCH with `currentState` and nothing is changed, so two workers finishing the same step cannot move the session twice.'
+
+export const expectedStateBody = {
+  type: 'string',
+  description: 'Optional guard: the state the caller believes the session is in. If the session is in another state the step is refused (STATE_MISMATCH) and nothing changes.',
 }
 
-/** Short random pause before retrying, so concurrent writers stop colliding. */
-function backoff(attempt: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, Math.random() * 5 * attempt))
+export const actorBody = {
+  type: 'string',
+  maxLength: ACTOR_MAX_LENGTH,
+  description: `Optional. Who is doing this (free text such as a worker or agent name, max ${ACTOR_MAX_LENGTH} characters); recorded on the event.`,
 }
 
-/**
- * Run a session read-modify-write with optimistic concurrency. `attempt` loads
- * the session afresh, decides and tries a conditional save; it returns true once
- * it has replied (success or error) and false when the save lost a race. The
- * whole attempt is then retried; after SESSION_WRITE_ATTEMPTS losses: 409.
- */
-async function withWriteRetries(reply: FastifyReply, attempt: () => Promise<boolean>): Promise<void> {
-  for (let i = 0; i < SESSION_WRITE_ATTEMPTS; i++) {
-    if (i > 0) await backoff(i)
-    if (await attempt()) return
-  }
-  reply.code(409).send(WRITE_CONFLICT)
-}
-
-function sendDataError(reply: FastifyReply, e: SessionDataError) {
-  reply.code(e.code === 'PAYLOAD_TOO_LARGE' ? 413 : 400).send({ error: e.message, code: e.code })
-}
-
-function recordUsage(req: FastifyRequest, usageStore: IUsageStore, eventType: 'advance' | 'session_created') {
-  const ctx = req.authContext
-  if (ctx?.type !== 'api' || !ctx.orgKeyId) return
-  usageStore.record({ orgKeyId: ctx.orgKeyId, apiKeyId: ctx.apiKeyId, apiKeyLabel: ctx.apiKeyLabel, eventType }).catch(() => {})
+function sendFailure(reply: FastifyReply, failure: OpFailure) {
+  reply.code(failure.status).send(failure.body)
 }
 
 export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISessionStore, usageStore: IUsageStore, apiKeyStore: IApiKeyStore) {
-  /** Save `updated` only if nobody saved `loaded` since it was read; bumps the revision. */
-  function commit(loaded: Session, updated: Session): Promise<boolean> {
-    const expected = sessionRevision(loaded)
-    return sessionStore.saveIfRevision({ ...updated, revision: expected + 1 }, expected)
-  }
+  const ops = sessionOps(workflowStore, sessionStore, usageStore, apiKeyStore)
 
   /**
-   * Load a session the caller may access. Sends 404 (same body as not found)
-   * when the session is missing or belongs to another org, and returns null.
-   */
-  async function loadAccessibleSession(req: AuthedRequest, reply: FastifyReply): Promise<Session | null> {
-    const session = await sessionStore.get(req.params.id)
-    if (!session || !(await canAccessSession(req, session, apiKeyStore))) {
-      reply.code(404).send(NOT_FOUND)
-      return null
-    }
-    return session
-  }
-
-  /**
-   * Load session + authorise + load its graph. The graph is always chosen by the
-   * session's own workflowName (or is its pinned snapshot); a caller-supplied
-   * workflow must match it.
+   * Load session + authorise + load its graph (see sessionOps.loadRun). Sends
+   * the error (404 with the same body for missing and inaccessible) and
+   * returns null when that fails.
    */
   async function loadSessionAndGraph(
     req: AuthedRequest,
     reply: FastifyReply,
     workflow: string | undefined,
   ): Promise<{ session: Session; graph: WorkflowGraph } | null> {
-    const session = await loadAccessibleSession(req, reply)
-    if (!session) return null
-    if (workflow !== undefined && workflow !== session.workflowName) {
-      reply.code(400).send({
-        error: `Session "${session.id}" belongs to workflow "${session.workflowName}", not "${workflow}". Omit workflow or pass "${session.workflowName}".`,
-        code: 'BAD_REQUEST',
-      })
+    const loaded = await ops.loadRun(req, req.params.id, workflow)
+    if (!loaded.ok) {
+      sendFailure(reply, loaded)
       return null
     }
-    const graph = await graphFor(workflowStore, session)
-    if (!graph) {
-      reply.code(404).send(NOT_FOUND)
-      return null
-    }
-    return { session, graph }
+    return loaded
+  }
+
+  /** Answer an advance or reset: the session on success, the failure's status and body otherwise. */
+  function sendStep(reply: FastifyReply, result: OpResult<WorkflowGraph | null>) {
+    if (!result.ok) return sendFailure(reply, result)
+    reply.send(sessionResponse(result.session, result.graph))
   }
 
   return async (app: FastifyInstance) => {
@@ -189,26 +140,9 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
       const owner = requestOwnerId(req)
       const graph = await workflowStore.get(req.body.workflow, owner)
       if (!graph) return reply.code(404).send({ error: 'Workflow not found', code: 'NOT_FOUND' })
-      let data: Record<string, unknown> = {}
-      try {
-        if (req.body.data !== undefined) data = mergeSessionData({}, req.body.data)
-      } catch (e) {
-        if (e instanceof SessionDataError) return sendDataError(reply, e)
-        throw e
-      }
-      const now = new Date()
-      const session: Session = {
-        id: randomUUID(),
-        workflowName: req.body.workflow,
-        workflowOwnerId: owner,
-        currentState: 'start',
-        history: ['start'],
-        createdAt: now,
-        updatedAt: now,
-        data,
-        events: [{ type: 'created', to: 'start', at: now.toISOString() }],
-      }
-      if (req.body.pin === true) session.pinnedGraph = structuredClone(graph)
+      const data = initialData(req.body.data)
+      if (!data.ok) return sendFailure(reply, data)
+      const session = buildSession(owner, graph, req.body.workflow, { data: data.data, pin: req.body.pin })
       await sessionStore.save(session)
       recordUsage(req, usageStore, 'session_created')
       reply.code(201).send({ ...sessionResponse(session, graph), warnings: graphWarnings(graph) })
@@ -253,6 +187,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
                 nextTransitions: { type: 'array', items: { $ref: 'Transition#' } },
                 data: { $ref: 'SessionData#' },
                 pinned: { type: 'boolean', description: 'Present and true when the session runs against a snapshot of its procedure (created with pin: true).' },
+                jobId: { type: 'string', description: 'Present when the session is a run of a job (see POST /job).' },
+                label: { type: 'string', description: 'Present on a run of a job: the name of its piece of work.' },
                 events: {
                   type: 'array',
                   items: { $ref: 'SessionEvent#' },
@@ -273,6 +209,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           ...stepContext(graph, session.currentState),
           data: session.data ?? {},
           ...pinnedFlag(session),
+          ...(session.jobId !== undefined ? { jobId: session.jobId } : {}),
+          ...(session.label !== undefined ? { label: session.label } : {}),
           events: session.events ?? [],
         })
       }
@@ -298,7 +236,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
       }
     )
 
-    app.post<{ Params: { id: string }; Body: { workflow?: string; completed_action?: string; data?: Record<string, unknown>; note?: string } }>(
+    app.post<{ Params: { id: string }; Body: { workflow?: string; completed_action?: string; expected_state?: string; actor?: string; data?: Record<string, unknown>; note?: string } }>(
       '/session/:id/advance', {
         schema: {
           tags: ['Sessions'],
@@ -306,7 +244,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
           description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the new state. '
             + 'A transition with "requires" can only be taken when each of those session-data keys has a value (not null or a blank string) once this '
             + 'request\'s `data` is merged; otherwise the response is 400 MISSING_REQUIRED_DATA with the keys in `missing`, and nothing is changed.'
-            + CONFLICT_NOTE,
+            + EXPECTED_STATE_NOTE + CONFLICT_NOTE,
           security: authed,
           params: idParams,
           body: {
@@ -314,47 +252,27 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
             properties: {
               workflow: optionalWorkflowQuery.properties.workflow,
               completed_action: { type: 'string' },
+              expected_state: expectedStateBody,
               data: dataBody,
               note: noteBody,
+              actor: actorBody,
             },
           },
           response: {
             200: { $ref: 'Session#' },
-            409: conflictResponse,
+            409: stepConflictResponse,
           },
         } as any,
-      }, async (req, reply) => withWriteRetries(reply, async () => {
-        // The next state is decided from the session as freshly loaded on every attempt
-        const loaded = await loadSessionAndGraph(req, reply, req.body?.workflow)
-        if (!loaded) return true
-        const { session, graph } = loaded
-        const body = req.body ?? {}
-        let updated: Session
-        try {
-          const transition = chooseTransition(graph, session, body.completed_action)
-          updated = applyAdvance(session, transition.to, { action: body.completed_action, note: body.note, data: body.data })
-          // Checked against the data as it would be after this advance; on failure nothing is saved
-          assertRequiredData(transition, updated.data)
-        } catch (e: any) {
-          if (e instanceof SessionDataError) sendDataError(reply, e)
-          else if (e instanceof RequiredDataError) reply.code(400).send({ error: e.message, code: e.code, missing: e.missing })
-          else reply.code(400).send({ error: e.message, code: 'BAD_REQUEST' })
-          return true
-        }
-        if (!(await commit(session, updated))) return false
-        recordUsage(req, usageStore, 'advance')
-        reply.send(sessionResponse(updated, graph))
-        return true
-      })
+      }, async (req, reply) => sendStep(reply, await ops.advance(req, req.params.id, req.body ?? {}))
     )
 
-    app.post<{ Params: { id: string }; Body: { workflow?: string; target_state?: string; data?: Record<string, unknown>; note?: string } }>(
+    app.post<{ Params: { id: string }; Body: { workflow?: string; target_state?: string; expected_state?: string; actor?: string; data?: Record<string, unknown>; note?: string } }>(
       '/session/:id/reset', {
         schema: {
           tags: ['Sessions'],
           summary: 'Reset session to a target state (default: start)',
           description: 'Returns the session with its data and the step context (stateDescription, isTerminal, nextTransitions) of the target state.'
-            + CONFLICT_NOTE,
+            + EXPECTED_STATE_NOTE + CONFLICT_NOTE,
           security: authed,
           params: idParams,
           body: {
@@ -362,39 +280,18 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
             properties: {
               workflow: optionalWorkflowQuery.properties.workflow,
               target_state: { type: 'string' },
+              expected_state: expectedStateBody,
               data: dataBody,
               note: noteBody,
+              actor: actorBody,
             },
           },
           response: {
             200: { $ref: 'Session#' },
-            409: conflictResponse,
+            409: stepConflictResponse,
           },
         } as any,
-      }, async (req, reply) => withWriteRetries(reply, async () => {
-        const loaded = await loadSessionAndGraph(req, reply, req.body?.workflow)
-        if (!loaded) return true
-        const { session, graph } = loaded
-        const body = req.body ?? {}
-        const target = body.target_state ?? 'start'
-        if (!hasState(graph, target)) {
-          reply.code(400).send({ error: `State "${target}" does not exist`, code: 'BAD_REQUEST' })
-          return true
-        }
-        let updated: Session
-        try {
-          updated = applyReset(session, target, { note: body.note, data: body.data })
-        } catch (e) {
-          if (e instanceof SessionDataError) {
-            sendDataError(reply, e)
-            return true
-          }
-          throw e
-        }
-        if (!(await commit(session, updated))) return false
-        reply.send(sessionResponse(updated, graph))
-        return true
-      })
+      }, async (req, reply) => sendStep(reply, await ops.reset(req, req.params.id, req.body ?? {}))
     )
 
     app.patch<{ Params: { id: string }; Body: { data: Record<string, unknown> } }>(
@@ -416,28 +313,24 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
             409: conflictResponse,
           },
         } as any,
-      }, async (req, reply) => withWriteRetries(reply, async () => {
-        const session = await loadAccessibleSession(req, reply)
-        if (!session) return true
+      }, async (req, reply) => sendStep(reply, await withWriteRetries<OpResult<WorkflowGraph | null>>(async () => {
+        const found = await ops.loadAccessible(req, req.params.id)
+        if (!found.ok) return found
+        const session = found.session
         let updated: Session
         try {
           updated = applyDataPatch(session, req.body.data)
         } catch (e) {
-          if (e instanceof SessionDataError) {
-            sendDataError(reply, e)
-            return true
-          }
+          if (e instanceof SessionDataError) return dataFailure(e)
           throw e
         }
-        if (!(await commit(session, updated))) return false
+        if (!(await ops.commit(session, updated))) return RETRY
         // Data can be updated even if the workflow was deleted; step context is then empty
-        const graph = await graphFor(workflowStore, session)
-        reply.send(sessionResponse(updated, graph))
-        return true
-      })
+        return { ok: true, session: updated, graph: await graphFor(workflowStore, session) }
+      }))
     )
 
-    app.get<{ Querystring: { workflow?: string; active?: boolean; limit?: number } }>(
+    app.get<{ Querystring: { workflow?: string; job?: string; active?: boolean; limit?: number } }>(
       '/sessions', {
         schema: {
           tags: ['Sessions'],
@@ -450,6 +343,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
             type: 'object',
             properties: {
               workflow: { type: 'string', description: 'Optional. Only sessions of this workflow (exact name).' },
+              job: { type: 'string', description: 'Optional. Only the sessions (runs) of this job (a jobId returned by POST /job).' },
               active: { type: 'boolean', description: 'Optional. true: only sessions not in a terminal state; false: only finished sessions (or whose workflow was deleted).' },
               limit: { type: 'integer', minimum: 1, default: LIST_DEFAULT_LIMIT, description: `Maximum number of sessions (default ${LIST_DEFAULT_LIMIT}, max ${LIST_MAX_LIMIT}).` },
             },
@@ -467,6 +361,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
                   updatedAt: { type: 'string', format: 'date-time' },
                   isTerminal: { type: 'boolean' },
                   pinned: { type: 'boolean', description: 'Present and true when the session runs against a snapshot of its procedure (created with pin: true).' },
+                  jobId: { type: 'string', description: 'Present when the session is a run of a job (see POST /job).' },
+                  label: { type: 'string', description: 'Present on a run of a job: the name of its piece of work.' },
                 },
                 required: ['id', 'workflowName', 'currentState', 'createdAt', 'isTerminal'],
               },
@@ -494,7 +390,7 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
         const pageSize = active === undefined ? limit : LIST_MAX_LIMIT
         let offset = 0
         while (items.length < limit) {
-          const page = await sessionStore.list(ownerIds, { workflowName: req.query.workflow, limit: pageSize, offset })
+          const page = await sessionStore.list(ownerIds, { workflowName: req.query.workflow, jobId: req.query.job || undefined, limit: pageSize, offset })
           for (const s of page) {
             const graph = await liveGraphFor(s)
             const isTerminal = graph?.states[s.currentState]?.isTerminal ?? false
@@ -507,6 +403,8 @@ export function sessionsRoutes(workflowStore: IWorkflowStore, sessionStore: ISes
               ...(s.updatedAt ? { updatedAt: s.updatedAt } : {}),
               isTerminal,
               ...pinnedFlag(s),
+              ...(s.jobId !== undefined ? { jobId: s.jobId } : {}),
+              ...(s.label !== undefined ? { label: s.label } : {}),
             })
             if (items.length >= limit) break
           }

@@ -9,6 +9,8 @@ export interface SessionEvent {
   to?: string
   action?: string
   note?: string
+  /** Who did it (free text, e.g. a worker or agent name). Missing on old events. */
+  actor?: string
   at: string // ISO timestamp
 }
 
@@ -39,6 +41,13 @@ export interface Session {
    * procedure. Missing on unpinned (and old) sessions.
    */
   pinnedGraph?: WorkflowGraph
+  /**
+   * The job this session belongs to: a group of sessions (runs) of the same
+   * procedure, one per piece of work. Missing on standalone (and old) sessions.
+   */
+  jobId?: string
+  /** Name of the piece of work this run covers, unique inside its job. */
+  label?: string
 }
 
 export interface OrgKey {

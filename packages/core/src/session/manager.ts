@@ -76,6 +76,8 @@ export function chooseTransition(
 export interface StepOptions {
   action?: string
   note?: string
+  /** Who performed the step; recorded on the event when given. */
+  actor?: string
   data?: unknown
   now?: Date
 }
@@ -85,6 +87,7 @@ function applyStep(session: Session, type: 'advance' | 'reset', newState: string
   const event: SessionEvent = { type, from: session.currentState, to: newState, at: now.toISOString() }
   if (opts.action !== undefined) event.action = opts.action
   if (opts.note !== undefined) event.note = opts.note
+  if (opts.actor !== undefined) event.actor = opts.actor
   const updated: Session = {
     ...session,
     currentState: newState,

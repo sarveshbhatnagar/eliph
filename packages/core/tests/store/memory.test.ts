@@ -277,3 +277,43 @@ describe('InMemoryOrgKeyStore fast lookup', () => {
     expect(await store.find(rawKey)).toBeNull()
   })
 })
+
+describe('InMemorySessionStore jobs', () => {
+  async function seeded() {
+    const store = new InMemorySessionStore()
+    const at = (day: number) => new Date(`2026-01-0${day}T00:00:00.000Z`)
+    await store.save({ ...makeSession('b'), jobId: 'job-1', label: 'two', createdAt: at(2) })
+    await store.save({ ...makeSession('z'), jobId: 'job-1', label: 'one', createdAt: at(1) })
+    await store.save({ ...makeSession('a'), jobId: 'job-1', label: 'three', createdAt: at(2) })
+    await store.save({ ...makeSession('other'), jobId: 'job-2', label: 'one', workflowOwnerId: 'owner-2', createdAt: at(1) })
+    await store.save({ ...makeSession('alone'), createdAt: at(3) })
+    return store
+  }
+
+  it('listByJob returns the job sessions oldest first, then by id', async () => {
+    const result = await (await seeded()).listByJob('job-1')
+    expect(result.map(s => s.id)).toEqual(['z', 'a', 'b'])
+    expect(result[0]).toMatchObject({ jobId: 'job-1', label: 'one' })
+  })
+
+  it('listByJob ignores owners and returns nothing for an unknown job', async () => {
+    const store = await seeded()
+    expect((await store.listByJob('job-2')).map(s => s.id)).toEqual(['other'])
+    expect(await store.listByJob('nope')).toEqual([])
+  })
+
+  it('list filters by jobId within the given owners', async () => {
+    const store = await seeded()
+    expect((await store.list([OWN], { jobId: 'job-1' })).map(s => s.id)).toEqual(['b', 'a', 'z'])
+    expect(await store.list([OWN], { jobId: 'job-2' })).toEqual([])
+    expect((await store.list([OWN], { jobId: 'job-1', limit: 1, offset: 1 })).map(s => s.id)).toEqual(['a'])
+    // No filter: sessions outside any job are still listed
+    expect((await store.list([OWN])).map(s => s.id)).toEqual(['alone', 'b', 'a', 'z'])
+  })
+
+  it('follows a session that leaves its job on re-save', async () => {
+    const store = await seeded()
+    await store.save({ ...makeSession('b'), createdAt: new Date('2026-01-02T00:00:00.000Z') })
+    expect((await store.listByJob('job-1')).map(s => s.id)).toEqual(['z', 'a'])
+  })
+})

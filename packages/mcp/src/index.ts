@@ -3,6 +3,14 @@ import { makeProcedureTools } from './tools/procedures'
 import { makeGraphTools } from './tools/graph'
 import { makeSessionTools } from './tools/sessions'
 import { makeAdvanceTools } from './tools/advance'
+import { makeJobTools } from './tools/jobs'
+
+/** Shared by advance, reset_state and the steps of advance_job. */
+const expectedStateProp = { type: 'string', description: 'Optional. The state you believe the session is in. If it is in any other state the call fails with STATE_MISMATCH and nothing changes. Pass it whenever another agent may be working on the same session.' }
+const actorProp = { type: 'string', maxLength: 200, description: 'Optional. Who is doing this (free text, max 200 characters), e.g. an agent or worker name. Recorded in the session event log.' }
+const stepDataProp = { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the run\'s session data; a key set to null removes it.' }
+const stepNoteProp = { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the event log (max 2000 characters).' }
+const stepActionProp = { type: 'string', description: 'The action that was completed; selects the symbolic transition. Leave out for a deterministic step.' }
 
 type ToolHandler = (args: Record<string, any>) => Promise<any>
 
@@ -129,24 +137,104 @@ export const toolMeta: Record<string, { description: string; inputSchema: object
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
   },
   advance: {
-    description: 'Advance an eliph session to the next state (only session_id is needed; workflow_name is optional). If a transition requires a completed_action, pass it here (the nextTransitions of the previous response tell you which). This is the core operation for driving a workflow forward step by step. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" to save what you gathered in this step (shallow-merged into the session data; null removes a key) and a "note" for the event log. If the transition taken lists "requires" (see nextTransitions), each of those session-data keys must have a value (not null or blank) once this call\'s "data" is merged; otherwise advance fails with MISSING_REQUIRED_DATA naming the missing keys and nothing changes, so pass them in "data" in the same call. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation.',
-    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, completed_action: { type: 'string', description: 'The action that was completed to enable this transition (if required)' }, data: { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the session data; a key set to null removes it. Store what you gathered (ids, links, decisions) so the work can be resumed later.' }, note: { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the session event log (max 2000 characters), e.g. why this step was taken.' } } },
+    description: 'Advance an eliph session to the next state (only session_id is needed; workflow_name is optional). If a transition requires a completed_action, pass it here (the nextTransitions of the previous response tell you which). This is the core operation for driving a workflow forward step by step. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" to save what you gathered in this step (shallow-merged into the session data; null removes a key) and a "note" for the event log. If the transition taken lists "requires" (see nextTransitions), each of those session-data keys must have a value (not null or blank) once this call\'s "data" is merged; otherwise advance fails with MISSING_REQUIRED_DATA naming the missing keys and nothing changes, so pass them in "data" in the same call. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation. Pass expected_state (the state you believe the session is in) when other agents may be working on the same session: if it is in another state the call fails with STATE_MISMATCH and nothing changes, so the same step is never applied twice; call current_state() to see where it is now. Pass "actor" to record who did it in the event log.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, completed_action: { type: 'string', description: 'The action that was completed to enable this transition (if required)' }, data: { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the session data; a key set to null removes it. Store what you gathered (ids, links, decisions) so the work can be resumed later.' }, note: { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the session event log (max 2000 characters), e.g. why this step was taken.' }, expected_state: expectedStateProp, actor: actorProp } },
   },
   reset_state: {
-    description: 'Reset an eliph session back to a previous state (defaults to "start"). Only session_id is needed. Use this to restart a workflow from the beginning or roll back to a specific state after an error or rejection. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" (shallow-merged into the session data; null removes a key) and a "note" explaining the reset for the event log. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation.',
-    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, target_state: { type: 'string', description: 'State to reset to (default: start)' }, data: { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the session data; a key set to null removes it. Store what you gathered (ids, links, decisions) so the work can be resumed later.' }, note: { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the session event log (max 2000 characters), e.g. why this step was taken.' } } },
+    description: 'Reset an eliph session back to a previous state (defaults to "start"). Only session_id is needed. Use this to restart a workflow from the beginning or roll back to a specific state after an error or rejection. The response already contains the state description (stateDescription), whether it is terminal (isTerminal) and the next transitions (nextTransitions) of the resulting state, so separate current_state()/next_transitions() calls are unnecessary. Optionally pass "data" (shallow-merged into the session data; null removes a key) and a "note" explaining the reset for the event log. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation. Pass expected_state (the state you believe the session is in) when other agents may be working on the same session: if it is in another state the call fails with STATE_MISMATCH and nothing changes, so the same step is never applied twice; call current_state() to see where it is now. Pass "actor" to record who did it in the event log.',
+    inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' }, target_state: { type: 'string', description: 'State to reset to (default: start)' }, data: { type: 'object', additionalProperties: true, description: 'Optional. Patch shallow-merged into the session data; a key set to null removes it. Store what you gathered (ids, links, decisions) so the work can be resumed later.' }, note: { type: 'string', maxLength: 2000, description: 'Optional. Short note recorded in the session event log (max 2000 characters), e.g. why this step was taken.' }, expected_state: expectedStateProp, actor: actorProp } },
   },
   update_session_data: {
     description: 'Merge data into an eliph session without changing its state. Session data is a JSON object (max 64 KB) that persists with the session: store what you gathered (ids, links, decisions) so the work can be resumed in a later conversation. The patch is shallow-merged: top-level keys replace existing ones and a key set to null is removed. Returns the session with its full data and the step context of its current state.',
     inputSchema: { type: 'object', required: ['session_id', 'data'], properties: { session_id: { type: 'string' }, data: { type: 'object', additionalProperties: true, description: 'Patch shallow-merged into the session data; a key set to null removes it.' } } },
   },
   list_sessions: {
-    description: 'List your eliph sessions, newest first: { id, workflowName, currentState, createdAt, updatedAt, isTerminal, pinned }[]. Use this to find a session to resume in a new conversation, then call current_state(session_id) to read its data and event log. Filter by workflow_name and by active (true = not finished; unpinned sessions whose workflow was deleted are never active).',
-    inputSchema: { type: 'object', properties: { workflow_name: { type: 'string', description: 'Optional. Only sessions of this workflow.' }, active: { type: 'boolean', description: 'Optional. true: only sessions not yet in a terminal state; false: only finished ones.' }, limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Optional. Maximum number of sessions (default 50, max 200).' } } },
+    description: 'List your eliph sessions, newest first: { id, workflowName, currentState, createdAt, updatedAt, isTerminal, pinned }[]. Use this to find a session to resume in a new conversation, then call current_state(session_id) to read its data and event log. Filter by workflow_name and by active (true = not finished; unpinned sessions whose workflow was deleted are never active). Sessions that are runs of a job also have jobId and label; pass job_id to list only the runs of that job (job_status gives the same runs with a summary).',
+    inputSchema: { type: 'object', properties: { workflow_name: { type: 'string', description: 'Optional. Only sessions of this workflow.' }, active: { type: 'boolean', description: 'Optional. true: only sessions not yet in a terminal state; false: only finished ones.' }, limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Optional. Maximum number of sessions (default 50, max 200).' }, job_id: { type: 'string', description: 'Optional. Only the runs of this job (the jobId returned by create_job).' } } },
   },
   requirements: {
     description: 'Returns the symbolic action names required to leave the session\'s current state (only session_id is needed) — i.e. the completed_action values you can pass to advance(). Returns [] if all outgoing transitions are deterministic (no action needed). This is a shorthand for next_transitions filtered to symbolic-only; prefer next_transitions for full context.',
     inputSchema: { type: 'object', required: ['session_id'], properties: { session_id: { type: 'string' }, workflow_name: { type: 'string', description: 'Optional. The session already knows its workflow; if given, it must match the session\'s workflow.' } } },
+  },
+  export_workflow: {
+    description: 'Turn a procedure into a Claude Code Workflow script that runs it over many items in parallel (one run per item, one agent per state). Use it when the same procedure has to be carried out for several pieces of work at once (several PRs, tickets, files).\n' +
+      'How to use it: 1) call export_workflow; 2) pass the returned "script" to the Workflow tool with args { items: [{ label, data }] } ("argsExample" shows the shape; label is a unique name for the piece of work, data is what its agents need to know); 3) when the workflow returns, pass its result\'s "items" unchanged to create_job with the same workflow_name. That one call records every run in eliph and checks each reported path against the procedure. If the result has "batches" (more than 2000 steps in total, see its "warning"), call create_job once per batch instead, each with the items whose labels the batch lists.\n' +
+      'Limits: at most 200 items, and one workflow run can make at most 1000 agent calls in total, so a procedure with many states fits fewer items per run ("notes" says how many); the script refuses a batch that cannot fit before any agent starts.\n' +
+      'The script does not talk to eliph while it runs, so nothing is recorded until step 3. Always read "notes": they list caveats of this export (loops and the step limit, states that run without an agent, states with no description).\n' +
+      'Returns { workflow, script, argsExample, notes }. Fails with NOT_EXPORTABLE, naming the cause, when the procedure has a probabilistic transition (a script cannot pick an exit at random; make it symbolic), has no "start" state, or has a reachable non-terminal state with no way out (add a transition or mark it terminal).',
+    inputSchema: { type: 'object', required: ['workflow_name'], properties: { workflow_name: { type: 'string' }, max_steps: { type: 'integer', minimum: 1, maximum: 200, description: 'Optional. Most steps one item may take before the script stops it (default 25, max 200). Only matters for procedures with loops; raise it if a legitimate run needs more.' } } },
+  },
+  create_job: {
+    description: 'Create a job: a group of eliph sessions ("runs") of the SAME procedure, one per piece of work. Use it instead of create_session when several pieces of work each follow the same procedure (e.g. five PRs to review), especially when different agents handle them in parallel: every piece of work gets its own run, so agents never share or overwrite each other\'s position. Each item needs a "label" (the name of the piece of work, unique inside the job, max 200 characters) and may carry initial "data". At most 200 items.\n' +
+      'Each run is an ordinary session: work on it with advance(session_id) and the other session tools, or advance many at once with advance_job. Keep the returned jobId; job_status(jobId) tells you whether the whole job is done.\n' +
+      'To record work that ALREADY happened, give an item "steps": the advances it went through, in order ({ completed_action?, data?, note? } each, at most 2000 steps in total). This is how the result of an export_workflow script is recorded: pass its result\'s "items" here unchanged (when that result has "batches", one create_job call per batch). Steps follow the same rules as advance(), so the recorded path is verified against the procedure.\n' +
+      'Returns { jobId, workflow, total, done, counts: { <state>: number }, runs: [{ id, label, currentState, isTerminal, updatedAt, error? }], warnings }. A step that is refused (unknown action, MISSING_REQUIRED_DATA, run already terminal) stops THAT run only: the run keeps the steps before it and gets "error" { message, code, missing?, atStep } (atStep counts from 0); the other runs are unaffected. So after create_job, check "done" and look for runs with "error". If the request itself is invalid (unknown workflow, no items, duplicate or empty labels, too many items or steps, bad data) nothing is created.',
+    inputSchema: {
+      type: 'object',
+      required: ['workflow_name', 'items'],
+      properties: {
+        workflow_name: { type: 'string' },
+        items: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 200,
+          description: 'One entry per piece of work, e.g. [{ "label": "PR 41", "data": { "pr_url": "..." } }, { "label": "PR 42" }].',
+          items: {
+            type: 'object',
+            required: ['label'],
+            properties: {
+              label: { type: 'string', maxLength: 200, description: 'Name of the piece of work, unique inside the job.' },
+              data: { type: 'object', additionalProperties: true, description: 'Optional initial session data of this run (JSON object, max 64 KB).' },
+              steps: {
+                type: 'array',
+                description: 'Optional. Advances this piece of work already went through, applied in order right after the run is created.',
+                items: { type: 'object', properties: { completed_action: stepActionProp, data: stepDataProp, note: stepNoteProp } },
+              },
+            },
+          },
+        },
+        pin: { type: 'boolean', description: 'Optional, default false. true pins every run to a snapshot of the procedure as it is now (see create_session).' },
+        actor: actorProp,
+      },
+    },
+  },
+  job_status: {
+    description: 'The one call that answers "is the whole job done?". Returns { jobId, workflow, total, done, counts: { <state>: number }, runs: [{ id, label, currentState, isTerminal, updatedAt }] }: "done" is true when every run is in a terminal state, "counts" says how many runs are in each state, and "runs" shows where each piece of work is. Use it to wait for parallel agents, to find the runs that are stuck, or to resume a job in a later conversation; call current_state(id) on a run for its data and event log.',
+    inputSchema: { type: 'object', required: ['job_id'], properties: { job_id: { type: 'string', description: 'The jobId returned by create_job.' } } },
+  },
+  advance_job: {
+    description: 'Advance several runs of a job in one call. Each step names its run by "label" (or "session_id") and otherwise works like advance(): completed_action for a symbolic transition, optional data and note. Steps are applied in order, and several steps for the same run are allowed (to move one run several states forward). At most 2000 steps.\n' +
+      'Set expected_state on a step (the state you believe that run is in) whenever another agent may be advancing the same run: if the run is somewhere else the step is refused with STATE_MISMATCH and the run is not moved, so a step two workers both report is applied only once.\n' +
+      'Returns the job summary (as job_status) plus "results", one per step in order: { label, id, ok, currentState, error?: { message, code, missing? } }. A refused step does not fail the call or the other steps, so check every "ok". Codes are those of advance() (BAD_REQUEST, MISSING_REQUIRED_DATA, PAYLOAD_TOO_LARGE, STATE_MISMATCH, CONFLICT) plus NOT_FOUND when the job has no such run.',
+    inputSchema: {
+      type: 'object',
+      required: ['job_id', 'steps'],
+      properties: {
+        job_id: { type: 'string', description: 'The jobId returned by create_job.' },
+        steps: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 2000,
+          description: 'Steps to apply in order, e.g. [{ "label": "PR 41", "completed_action": "approved", "expected_state": "reviewing" }].',
+          items: {
+            type: 'object',
+            properties: {
+              label: { type: 'string', description: 'The label of the run to advance. Give this or session_id.' },
+              session_id: { type: 'string', description: 'The session id of the run to advance. Give this or label.' },
+              completed_action: stepActionProp,
+              expected_state: { type: 'string', description: 'Optional. The state you believe this run is in; the step is refused with STATE_MISMATCH if it is elsewhere.' },
+              data: stepDataProp,
+              note: stepNoteProp,
+            },
+          },
+        },
+        actor: actorProp,
+      },
+    },
+  },
+  delete_job: {
+    description: 'Delete a job: every run (session) of it that you can access, with its data and event log. Use this to clean up after a job is finished or abandoned. This cannot be undone.',
+    inputSchema: { type: 'object', required: ['job_id'], properties: { job_id: { type: 'string', description: 'The jobId returned by create_job.' } } },
   },
 }
 
@@ -158,6 +246,7 @@ export function buildMcpServer(apiUrl: string, apiKey: string) {
     ...makeGraphTools(client),    // includes mark_terminal
     ...makeSessionTools(client),
     ...makeAdvanceTools(client),
+    ...makeJobTools(client),
   } as unknown as Record<string, ToolHandler>
 
   return {
