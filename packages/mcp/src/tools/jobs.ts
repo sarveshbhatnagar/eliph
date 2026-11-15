@@ -57,13 +57,29 @@ export function makeJobTools(client: ApiClient) {
       return client.request('POST', `${jobPath(args.job_id)}/advance`, body)
     },
 
+    sync_job: async (args: { job_id: string; items: JobItem[]; actor?: string }) => {
+      const body: { items: unknown; actor?: string } = {
+        // Only label and steps are sent: a workflow result's items carry more (data, finalState, error)
+        items: Array.isArray(args.items)
+          ? args.items.map(item => (item && typeof item === 'object'
+            ? { label: item.label, steps: Array.isArray(item.steps) ? item.steps.map(step => pick(step, ['completed_action', 'data', 'note'])) : [] }
+            : item))
+          : args.items,
+      }
+      if (args.actor) body.actor = args.actor
+      return client.request('POST', `${jobPath(args.job_id)}/sync`, body)
+    },
+
     delete_job: async (args: { job_id: string }) => {
       await client.request('DELETE', jobPath(args.job_id))
       return { deleted: true }
     },
 
-    export_workflow: async (args: { workflow_name: string; max_steps?: number }) => {
-      const qs = args.max_steps !== undefined ? `?max_steps=${encodeURIComponent(String(args.max_steps))}` : ''
+    export_workflow: async (args: { workflow_name: string; max_steps?: number; live?: boolean }) => {
+      const params = new URLSearchParams()
+      if (args.max_steps !== undefined && args.max_steps !== null) params.set('max_steps', String(args.max_steps))
+      if (args.live === true) params.set('live', 'true')
+      const qs = params.toString() ? `?${params.toString()}` : ''
       return client.request('GET', `/procedure/${encodeURIComponent(args.workflow_name)}/workflow-script${qs}`)
     },
   }

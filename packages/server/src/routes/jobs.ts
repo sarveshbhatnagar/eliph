@@ -1,8 +1,8 @@
 import { FastifyInstance } from 'fastify'
 import { randomUUID } from 'crypto'
-import { IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, graphWarnings } from '@eliph/core'
+import { IWorkflowStore, ISessionStore, IUsageStore, IApiKeyStore, Session, WorkflowGraph, getNextTransitions, graphWarnings } from '@eliph/core'
 import { requestOwnerId, canAccessSession } from '../middleware/auth'
-import { Caller, ErrorBody, NOT_FOUND, advanceOnce, buildSession, initialData, recordUsage, sessionOps } from './session-ops'
+import { Caller, ErrorBody, NOT_FOUND, advanceOnce, buildSession, graphFor, initialData, recordUsage, sessionOps } from './session-ops'
 import { actorBody, dataBody, expectedStateBody, noteBody } from './sessions'
 
 const authed = [{ BearerAuth: [] }]
@@ -133,6 +133,48 @@ function itemsProblem(items: JobItem[]): string | null {
  */
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setImmediate(resolve))
+}
+
+/**
+ * The state a reported step leads to from `state`, without taking it: the
+ * symbolic exit named by the action, or else the single deterministic exit.
+ * undefined when the step is not one the procedure allows from there (or the
+ * exit would be picked at random), which the advance itself then explains.
+ */
+function stepTarget(graph: WorkflowGraph, state: string, action: string | undefined): string | undefined {
+  const exits = getNextTransitions(graph, state)
+  if (action !== undefined) return exits.find(t => t.type === 'symbolic' && t.action === action)?.to
+  if (exits.some(t => t.type === 'probabilistic')) return undefined
+  const deterministic = exits.filter(t => t.type === 'deterministic')
+  return deterministic.length === 1 ? deterministic[0].to : undefined
+}
+
+/**
+ * How a run compares with the steps reported for it. `history` is the run's
+ * own path (it begins with "start"). The reported steps are walked from
+ * "start"; the run matches when its path is the beginning of theirs (the
+ * steps after it are still to be applied) or theirs is the beginning of its
+ * path (nothing to do). `skip` is the number of reported steps the run has
+ * already taken; `states[i]` is the state step i must be taken from.
+ */
+function compareWithReport(graph: WorkflowGraph, history: string[], steps: JobStep[]): { diverged: false; skip: number; states: string[] } | { diverged: true; atStep: number } {
+  const taken = history.length - 1
+  const states: string[] = ['start']
+  if (history[0] !== 'start') return { diverged: true, atStep: 0 }
+  for (let i = 0; i < steps.length; i++) {
+    const from = states[i]
+    if (i >= taken) {
+      // Beyond what the run has taken: only the state to take it from is needed
+      const to = stepTarget(graph, from, steps[i].completed_action)
+      if (to === undefined) break
+      states.push(to)
+      continue
+    }
+    const to = stepTarget(graph, from, steps[i].completed_action)
+    if (to === undefined || to !== history[i + 1]) return { diverged: true, atStep: i }
+    states.push(to)
+  }
+  return { diverged: false, skip: Math.min(taken, steps.length), states }
 }
 
 function runError(body: ErrorBody): RunError {
@@ -276,6 +318,8 @@ export function jobsRoutes(workflowStore: IWorkflowStore, sessionStore: ISession
       // and a job keeps the order of its items in every store.
       const lastCreatedAt = Date.now()
       for (const [i, item] of items.entries()) {
+        // Each run is a save of its own; other requests get a turn between them
+        if (i > 0) await yieldToEventLoop()
         const now = new Date(lastCreatedAt - (items.length - 1 - i))
         let session = buildSession(owner, graph, workflow, { data: datas[i], pin, jobId, label: item.label, actor, now })
         // The steps are decided in memory and the run is saved once, as it stands after the last accepted step
@@ -419,6 +463,151 @@ export function jobsRoutes(workflowStore: IWorkflowStore, sessionStore: ISession
         }
       }
       // Read again so the summary shows the runs as they are now
+      const after = await accessibleRuns(req, jobId)
+      const summary = after.length > 0
+        ? await summarize(jobId, after)
+        : { jobId, workflow: runs[0].workflowName, total: 0, done: false, counts: {}, runs: [] }
+      reply.send({ ...summary, results })
+    })
+
+    app.post<{ Params: { id: string }; Body: { items: Array<{ label: string; steps?: JobStep[] }>; actor?: string } }>('/job/:id/sync', {
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Bring runs of a job up to date with the steps reported for them',
+        description: 'For each item, `steps` is the whole path of that run from "start" (the same steps POST /job accepts). The steps the run has '
+          + 'already taken are skipped and only the rest are applied, with the same rules as POST /session/{id}/advance, so the call can be '
+          + 'repeated safely: workers can report after every step while a workflow is running, and the final result can be sent again at the end '
+          + 'to fill in anything that was missed. A run whose own path is not the beginning of the reported steps (or the other way round) is '
+          + 'left untouched and reported with code DIVERGED. Per-item problems do not fail the request: see `results` (one entry per item, in order). '
+          + `At most ${JOB_LIMITS.maxItems} items and ${JOB_LIMITS.maxSteps} steps per request.`,
+        security: authed,
+        params: idParams,
+        body: {
+          type: 'object',
+          required: ['items'],
+          properties: {
+            items: {
+              type: 'array',
+              description: 'One entry per run to bring up to date.',
+              items: {
+                type: 'object',
+                required: ['label'],
+                properties: {
+                  label: { type: 'string', description: 'The label of the run.' },
+                  steps: { type: 'array', description: 'Every step of the run so far, in order, from "start".', items: { type: 'object', properties: stepProperties } },
+                },
+              },
+            },
+            actor: actorBody,
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              ...jobProperties,
+              results: {
+                type: 'array',
+                description: 'One entry per item, in request order.',
+                items: {
+                  type: 'object',
+                  properties: {
+                    label: { type: 'string' },
+                    id: { type: 'string', description: 'The session id of the run; absent when the job has no such run.' },
+                    ok: { type: 'boolean', description: 'true when the run now holds every reported step.' },
+                    currentState: { type: 'string' },
+                    skipped: { type: 'integer', description: 'Reported steps the run had already taken.' },
+                    applied: { type: 'integer', description: 'Reported steps applied by this request.' },
+                    error: {
+                      type: 'object',
+                      properties: {
+                        ...stepErrorProperties,
+                        code: { type: 'string', description: 'DIVERGED, NOT_FOUND, or the code the single-session advance would answer with.' },
+                        atStep: { type: 'integer', description: 'Index (from 0) in the item\'s `steps` of the step that did not fit or was refused.' },
+                      },
+                      required: ['message', 'code'],
+                    },
+                  },
+                  required: ['label', 'ok'],
+                },
+              },
+            },
+            required: [...jobRequired, 'results'],
+          },
+        },
+      } as any,
+    }, async (req, reply) => {
+      const jobId = req.params.id
+      const items = req.body.items
+      const actor = req.body.actor ? req.body.actor : undefined
+      if (items.length === 0) return reply.code(400).send(badRequest('items must contain at least one item: { label, steps }.'))
+      if (items.length > JOB_LIMITS.maxItems) {
+        return reply.code(400).send(badRequest(`A request can carry at most ${JOB_LIMITS.maxItems} items; got ${items.length}.`))
+      }
+      const seen = new Set<string>()
+      let total = 0
+      for (const [i, item] of items.entries()) {
+        if (typeof item.label !== 'string' || item.label === '') return reply.code(400).send(badRequest(`Item ${i + 1} has no label.`))
+        if (seen.has(item.label)) return reply.code(400).send(badRequest(`Label ${JSON.stringify(item.label)} is used more than once.`))
+        seen.add(item.label)
+        total += item.steps?.length ?? 0
+      }
+      if (total > JOB_LIMITS.maxSteps) {
+        return reply.code(400).send(badRequest(`A request can carry at most ${JOB_LIMITS.maxSteps} steps in total; got ${total}.`))
+      }
+
+      const runs = await accessibleRuns(req, jobId)
+      if (runs.length === 0) return reply.code(404).send(NOT_FOUND)
+      // Items are resolved inside this job's accessible runs only, never by a lookup outside it
+      const byLabel = new Map(runs.filter(r => r.label !== undefined).map(r => [r.label as string, r]))
+
+      const results = []
+      for (const [i, item] of items.entries()) {
+        if (i > 0) await yieldToEventLoop()
+        const steps = item.steps ?? []
+        const run = byLabel.get(item.label)
+        if (!run) {
+          results.push({ label: item.label, ok: false, error: { message: `This job has no run for label ${JSON.stringify(item.label)}.`, code: 'NOT_FOUND' } })
+          continue
+        }
+        const graph = await graphFor(workflowStore, run)
+        if (!graph) {
+          results.push({ label: item.label, id: run.id, ok: false, currentState: run.currentState, error: { message: 'The procedure of this run no longer exists.', code: 'NOT_FOUND' } })
+          continue
+        }
+        const compared = compareWithReport(graph, run.history, steps)
+        if (compared.diverged) {
+          results.push({
+            label: item.label, id: run.id, ok: false, currentState: run.currentState, skipped: 0, applied: 0,
+            error: {
+              message: `The run took a different path (${run.history.join(' -> ')}) than the reported steps from step ${compared.atStep + 1} on. Nothing was changed.`,
+              code: 'DIVERGED',
+              atStep: compared.atStep,
+            },
+          })
+          continue
+        }
+        let currentState = run.currentState
+        let applied = 0
+        let error: (RunError & { atStep: number }) | undefined
+        for (let n = compared.skip; n < steps.length; n++) {
+          await yieldToEventLoop()
+          const step = steps[n]
+          // Taken only from the state the report says it starts in, so a step another caller
+          // records at the same moment is never applied twice
+          const result = await ops.advance(req, run.id, {
+            completed_action: step.completed_action, expected_state: compared.states[n], data: step.data, note: step.note, actor,
+          }, jobId)
+          if (!result.ok) {
+            if (result.session) currentState = result.session.currentState
+            error = { ...runError(result.body), atStep: n }
+            break
+          }
+          currentState = result.session.currentState
+          applied++
+        }
+        results.push({ label: item.label, id: run.id, ok: !error, currentState, skipped: compared.skip, applied, ...(error ? { error } : {}) })
+      }
       const after = await accessibleRuns(req, jobId)
       const summary = after.length > 0
         ? await summarize(jobId, after)

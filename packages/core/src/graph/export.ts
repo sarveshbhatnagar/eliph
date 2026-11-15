@@ -24,6 +24,13 @@ const MAX_AGENT_CALLS = 1000
 export interface WorkflowExportOptions {
   /** Most steps one item may take before it is stopped (default 25, clamped to 1..200). Bounds loops. */
   maxSteps?: number
+  /**
+   * Live progress: each agent also records its step in Eliph (the sync_job
+   * tool) as soon as it finishes, into a job created before the run. Off by
+   * default, where the script never touches Eliph and everything is reported
+   * at the end.
+   */
+  live?: boolean
 }
 
 export interface WorkflowExport {
@@ -183,6 +190,7 @@ export function exportWorkflowScript(graph: WorkflowGraph, opts: WorkflowExportO
   }
 
   const maxSteps = clampMaxSteps(opts.maxSteps)
+  const live = opts.live === true
   const stateOf = (name: string): State | undefined => (hasState(graph, name) ? graph.states[name] : undefined)
   const working = reachable.filter(name => !stateOf(name)?.isTerminal)
   const silent = working.filter(name => runsWithoutAgent(stateOf(name), getNextTransitions(graph, name)))
@@ -226,6 +234,7 @@ export function exportWorkflowScript(graph: WorkflowGraph, opts: WorkflowExportO
     __MAX_DATA_DEPTH__: String(MAX_DATA_DEPTH),
     __MAX_AGENT_CALLS__: String(MAX_AGENT_CALLS),
     __MIN_AGENT_CALLS__: String(minCalls),
+    __LIVE__: String(live),
   }
   // One pass with a replacer function: inserted text is never rescanned, and
   // "$" sequences in user text are not treated as replacement patterns.
@@ -233,22 +242,35 @@ export function exportWorkflowScript(graph: WorkflowGraph, opts: WorkflowExportO
 
   return {
     script,
-    argsExample: { items: [{ label: 'item-1', data: {} }, { label: 'item-2', data: {} }] },
-    notes: exportNotes(graph, { maxSteps, reachable, silent, agentStates, minCalls }),
+    argsExample: live
+      ? { job_id: '<jobId returned by create_job>', items: [{ label: 'item-1', data: {} }, { label: 'item-2', data: {} }] }
+      : { items: [{ label: 'item-1', data: {} }, { label: 'item-2', data: {} }] },
+    notes: exportNotes(graph, { maxSteps, reachable, silent, agentStates, minCalls, live }),
   }
 }
 
 function exportNotes(
   graph: WorkflowGraph,
-  info: { maxSteps: number; reachable: string[]; silent: string[]; agentStates: string[]; minCalls: number },
+  info: { maxSteps: number; reachable: string[]; silent: string[]; agentStates: string[]; minCalls: number; live: boolean },
 ): string[] {
-  const { maxSteps, reachable, silent, agentStates, minCalls } = info
-  const notes: string[] = [
-    'The script does not talk to Eliph. When it returns, pass the returned "items" (label, data, steps) to POST /job ' +
-    `(create_job) with workflow "${graph.name}" to record every run in one call.`,
-    `Pass args as { items: [{ label, data? }] } with unique labels (at most ${MAX_ITEMS} items). Items run concurrently and independently; ` +
-    'each state of each item is one agent call that starts with a fresh context.',
-  ]
+  const { maxSteps, reachable, silent, agentStates, minCalls, live } = info
+  const notes: string[] = live
+    ? [
+      'Live progress. BEFORE running the script, create the job: POST /job (create_job) with workflow ' +
+      `"${graph.name}" and items [{ label, data? }] WITHOUT steps. Pass args as { job_id: <the jobId it returned>, items: <the same items> }.`,
+      'While the script runs, each agent records its own step in Eliph with the sync_job tool, so GET /job/{id} (job_status) shows progress. ' +
+      'An agent that cannot reach Eliph carries on; nothing is lost.',
+      'AFTER the script returns, pass its "job_id" and "items" to POST /job/{id}/sync (sync_job) once: steps already recorded are skipped and ' +
+      'any that were missed are added. Do not call create_job again.',
+      `Labels must be unique (at most ${MAX_ITEMS} items). Items run concurrently and independently; ` +
+      'each state of each item is one agent call that starts with a fresh context.',
+    ]
+    : [
+      'The script does not talk to Eliph. When it returns, pass the returned "items" (label, data, steps) to POST /job ' +
+      `(create_job) with workflow "${graph.name}" to record every run in one call.`,
+      `Pass args as { items: [{ label, data? }] } with unique labels (at most ${MAX_ITEMS} items). Items run concurrently and independently; ` +
+      'each state of each item is one agent call that starts with a fresh context.',
+    ]
   if (hasCycle(graph)) {
     notes.push(
       `The procedure has loops. Each item is stopped after ${maxSteps} steps (max_steps) and reported with an error and the steps it completed; ` +
@@ -302,7 +324,10 @@ function exportNotes(
     )
   }
   if (MAX_ITEMS * maxSteps > MAX_JOB_STEPS) {
-    notes.push(
+    notes.push(live
+      ? `POST /job/{id}/sync accepts at most ${MAX_JOB_STEPS} steps in total. When a result has more, the script says so and returns "batches" ` +
+      '(lists of labels): call sync_job once per batch, with the same job_id and the items it names.'
+      :
       `POST /job accepts at most ${MAX_JOB_STEPS} steps in total. When a result has more, the script says so and returns "batches" ` +
       '(lists of labels): call POST /job (create_job) once per batch with the items it names. Each call creates its own job.'
     )
@@ -321,8 +346,9 @@ const RUNTIME = String.raw`export const meta = __META__
 // Generated by Eliph from a procedure. Runs every item through the procedure's
 // state machine, one agent per state, and returns the path each item took.
 // The result's "items" (label, data, steps) can be passed as-is to Eliph's
-// POST /job to record the runs; a result with "batches" has too many steps for
-// one call and is reported batch by batch. Regenerate instead of editing by hand.
+// POST /job to record the runs (or, with live progress, to POST /job/{id}/sync);
+// a result with "batches" has too many steps for one call and is reported batch
+// by batch. Regenerate instead of editing by hand.
 
 const PROCEDURE = __PROCEDURE__
 const MAX_STEPS = __MAX_STEPS__
@@ -334,6 +360,8 @@ const MAX_DATA_BYTES = __MAX_DATA_BYTES__
 const MAX_DATA_DEPTH = __MAX_DATA_DEPTH__
 const MAX_AGENT_CALLS = __MAX_AGENT_CALLS__
 const MIN_AGENT_CALLS_PER_ITEM = __MIN_AGENT_CALLS__
+// Live progress: agents record their own step in Eliph, into the job named by args.job_id.
+const LIVE = __LIVE__
 const FORBIDDEN_KEYS = ['__proto__', 'constructor', 'prototype']
 
 const STATES = new Map(PROCEDURE.states.map(s => [s.name, s]))
@@ -425,11 +453,24 @@ function describeExit(exit) {
     : 'completing the step (moves to ' + JSON.stringify(exit.to) + ')'
 }
 
-function readItems(input) {
-  let raw = input
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw) } catch (e) { throw new Error('args must be { items: [{ label, data? }] }, got a string that is not JSON.') }
+function parseArgs(input) {
+  if (typeof input !== 'string') return input
+  try { return JSON.parse(input) } catch (e) { throw new Error('args must be { items: [{ label, data? }] }, got a string that is not JSON.') }
+}
+
+function readJobId(input) {
+  if (!LIVE) return undefined
+  const raw = parseArgs(input)
+  const id = isObject(raw) ? raw.job_id : undefined
+  if (typeof id !== 'string' || id.trim() === '') {
+    throw new Error('This script records progress in Eliph while it runs, so it needs the job to exist first. Create it with create_job '
+      + '(workflow ' + JSON.stringify(PROCEDURE.name) + ', items [{ label, data }] without steps) and pass args as { job_id: <its jobId>, items: [...] }.')
   }
+  return id
+}
+
+function readItems(input) {
+  const raw = parseArgs(input)
   const list = Array.isArray(raw) ? raw : (isObject(raw) ? raw.items : undefined)
   if (!Array.isArray(list) || list.length === 0) {
     throw new Error('No items to run. Pass args as { items: [{ label: "name of the piece of work", data: { ... } }] } with at least one item.')
@@ -489,6 +530,7 @@ function buildSchema(exits, symbolic, deterministic) {
   }
   properties.data = { type: 'object', properties: dataProperties, additionalProperties: true }
   properties.note = { type: 'string' }
+  if (LIVE) properties.recorded = { type: 'boolean' }
   return { type: 'object', properties: properties, required: required }
 }
 
@@ -531,6 +573,19 @@ function buildPrompt(item, run, state, exits, symbolic, deterministic, retry) {
   if (symbolic.length > 0) lines.push('- action: exactly one of the action names above' + (deterministic.length === 1 ? ', or leave it out as described' : '') + '.')
   lines.push('- data: an object with the values this step produced (the data keys asked for above as strings, plus anything a later step will need, since later steps only see this data).')
   lines.push('- note: one or two sentences on what you did and why you finished this way.')
+  if (LIVE) {
+    lines.push('- recorded: true if the sync_job call described below succeeded, otherwise false.')
+    lines.push('')
+    lines.push('Record this step in Eliph so progress is visible while the work goes on. When the work of the step is done and you know your report,')
+    lines.push('call the Eliph tool "sync_job" ONCE (its full name usually carries a prefix, such as "eliph-sync_job"; search your tools for "sync_job" if you do not see it) with:')
+    lines.push('- job_id: ' + JSON.stringify(JOB_ID))
+    lines.push('- actor: ' + JSON.stringify('workflow: ' + state.name))
+    lines.push('- items: a list with ONE entry: { "label": ' + JSON.stringify(item.label) + ', "steps": [ ...the earlier steps below, copied unchanged and in order..., YOUR STEP ] }')
+    lines.push('YOUR STEP is the last entry of "steps": { "completed_action": the action you report (leave the key out when you report no action), "data": the same data object you report, "note": the same note }.')
+    lines.push('Earlier steps of this piece of work (a JSON list; copy every entry before your own step, even empty ones):')
+    lines.push(JSON.stringify(run.steps))
+    lines.push('If the tool is not available, or the call fails or reports an error for this piece of work, do not try more than twice and do not stop: report as described with recorded false. The step is then recorded later.')
+  }
   if (retry) {
     lines.push('')
     lines.push('IMPORTANT: your previous report finished by ' + describeExit(retry.exit) + ' but left out required data: '
@@ -542,7 +597,8 @@ function buildPrompt(item, run, state, exits, symbolic, deterministic, retry) {
 }
 
 async function runItem(item) {
-  const run = { state: 'start', data: cleanData(item.data), steps: [] }
+  // recorded: how many steps the agents said they recorded in Eliph themselves (live progress only)
+  const run = { state: 'start', data: cleanData(item.data), steps: [], recorded: 0 }
   let error
   try {
     while (true) {
@@ -608,6 +664,7 @@ async function runItem(item) {
         Object.assign(returned, more)
         Object.assign(run.data, more)
         if (typeof second.note === 'string' && second.note.trim() !== '') note = second.note
+        first.recorded = second.recorded
         missing = missingFor(exit, run.data)
         if (missing.length > 0) {
           error = 'State ' + JSON.stringify(run.state) + ': finishing by ' + describeExit(exit) + ' requires data '
@@ -631,6 +688,7 @@ async function runItem(item) {
       if (typeof note === 'string' && note.trim() !== '') step.note = note.trim().slice(0, MAX_NOTE)
       run.steps.push(step)
       run.state = exit.to
+      if (first.recorded === true) run.recorded++
     }
   } catch (e) {
     // Keep what was completed: a throw must not discard earlier steps.
@@ -638,9 +696,11 @@ async function runItem(item) {
   }
   const result = { label: item.label, data: item.data, steps: run.steps, finalState: run.state }
   if (error) result.error = error
+  if (LIVE) result.recorded = run.recorded
   return result
 }
 
+const JOB_ID = readJobId(args)
 const ITEMS = readItems(args)
 const settled = await parallel(ITEMS.map(item => () => runItem(item)))
 const results = settled.map((result, index) => result || {
@@ -654,6 +714,11 @@ const failed = results.filter(r => r.error).length
 log(PROCEDURE.name + ': ' + (results.length - failed) + ' finished, ' + failed + ' failed (of ' + results.length + ')')
 
 const output = { workflow: PROCEDURE.name, items: results }
+if (LIVE) {
+  // The job exists already: the result is reported with sync_job, never with create_job.
+  output.job_id = JOB_ID
+  output.next = 'Call sync_job with this job_id and these items once, to add any step that was not recorded while the script ran.'
+}
 const totalSteps = results.reduce((sum, r) => sum + r.steps.length, 0)
 if (totalSteps > MAX_JOB_STEPS) {
   // Too many steps for one POST /job: say how to split, in item order.
@@ -668,7 +733,7 @@ if (totalSteps > MAX_JOB_STEPS) {
     inBatch += r.steps.length
   }
   output.batches = batches
-  output.warning = 'The items hold ' + totalSteps + ' steps and one POST /job (create_job) accepts ' + MAX_JOB_STEPS
+  output.warning = 'The items hold ' + totalSteps + ' steps and one ' + (LIVE ? 'POST /job/{id}/sync (sync_job)' : 'POST /job (create_job)') + ' accepts ' + MAX_JOB_STEPS
     + '. Report them in ' + batches.length + ' calls: one per entry of "batches", each with the items whose labels it lists.'
   log(output.warning)
 }

@@ -13,7 +13,7 @@ function fakeClient(result: any = {}) {
   return { client: { request } as any, request }
 }
 
-const JOB_TOOLS = ['create_job', 'job_status', 'advance_job', 'delete_job', 'export_workflow']
+const JOB_TOOLS = ['create_job', 'job_status', 'advance_job', 'sync_job', 'delete_job', 'export_workflow']
 
 describe('job tools: registration and descriptions', () => {
   it('registers every job tool with metadata', () => {
@@ -109,6 +109,33 @@ describe('job tools: requests', () => {
       ['POST', `/job/${enc}/advance`, { steps: [{ session_id: 's' }], actor: 'me' }],
       ['DELETE', `/job/${enc}`],
     ])
+  })
+
+  it('export_workflow asks for a live script only when live is true', async () => {
+    const { client, request } = fakeClient({ script: 's' })
+    const j = makeJobTools(client)
+    await j.export_workflow({ workflow_name: 'wf', live: true })
+    await j.export_workflow({ workflow_name: 'wf', live: false, max_steps: 9 })
+    expect(request.mock.calls).toEqual([
+      ['GET', '/procedure/wf/workflow-script?live=true'],
+      ['GET', '/procedure/wf/workflow-script?max_steps=9'],
+    ])
+  })
+
+  it('sync_job sends only label and steps of each item', async () => {
+    const { client, request } = fakeClient({ results: [] })
+    const j = makeJobTools(client)
+    await j.sync_job({
+      job_id: 'j 1',
+      items: [{ label: 'a', data: { x: 1 }, steps: [{ completed_action: 'go', note: null as any, extra: 1 } as any], finalState: 'end' } as any, { label: 'b' }],
+      actor: 'w',
+    })
+    expect(request.mock.calls).toEqual([
+      ['POST', '/job/j%201/sync', { items: [{ label: 'a', steps: [{ completed_action: 'go' }] }, { label: 'b', steps: [] }], actor: 'w' }],
+    ])
+    expect((toolMeta.sync_job.inputSchema as any).required).toEqual(['job_id', 'items'])
+    expect(toolMeta.sync_job.description).toContain('DIVERGED')
+    expect(toolMeta.export_workflow.description).toContain('live: true')
   })
 
   it('export_workflow GETs the script, with max_steps only when given', async () => {
@@ -338,6 +365,53 @@ describe('job tools end to end against the real API', () => {
     const state = await call('current_state', { session_id: run.id })
     expect(state.history).toEqual(['start', 'review', 'start', 'review', 'end'])
     expect(state.data).toEqual({ pr_url: 'https://example.test/pr-2' })
+  })
+
+  it('live export: agents record their own steps with sync_job, and the final sync fills in what one of them missed', async () => {
+    const exported = await call('export_workflow', { workflow_name: 'review', live: true })
+    expect(exported.argsExample).toEqual({ job_id: expect.any(String), items: expect.any(Array) })
+    const items = [{ label: 'pr-1', data: { repo: 'x' } }, { label: 'pr-2' }, { label: 'pr-3' }]
+    const job = await call('create_job', { workflow_name: 'review', items })
+
+    // A stand-in for the worker agents: each does what its prompt says, calling sync_job through the MCP server
+    // with the earlier steps copied from the prompt plus its own. The reviewer of pr-3 "forgets" to record.
+    const during: Record<string, string> = {}
+    const agent = async (prompt: string, opts: { label: string; phase: string }) => {
+      const label = opts.label.split(': ')[0]
+      const answer: Record<string, any> = opts.phase === 'start'
+        ? { note: `opened ${label}` }
+        : { action: 'approved', data: { pr_url: `https://example.test/${label}` }, note: 'approved' }
+      if (label === 'pr-3' && opts.phase === 'review') return { ...answer, recorded: false }
+      const jobId = JSON.parse(prompt.match(/^- job_id: (.*)$/m)![1])
+      const lines = prompt.split('\n')
+      const earlier = JSON.parse(lines[lines.findIndex(l => l.startsWith('Earlier steps of this piece of work')) + 1])
+      const own: Record<string, any> = {}
+      if (answer.action) own.completed_action = answer.action
+      if (answer.data) own.data = answer.data
+      own.note = answer.note
+      const synced = await call('sync_job', { job_id: jobId, items: [{ label, steps: [...earlier, own] }], actor: `workflow: ${opts.phase}` })
+      during[opts.label] = synced.results[0].currentState
+      return { ...answer, recorded: synced.results[0].ok }
+    }
+    const parallel = (thunks: Array<() => Promise<unknown>>) => Promise.all(thunks.map(async t => { try { return await t() } catch { return null } }))
+    const unused = () => { throw new Error('not used') }
+    const fn = new AsyncFunction('agent', 'parallel', 'pipeline', 'phase', 'log', 'args', exported.script.replace(/^export /, ''))
+    const result = await fn(agent, parallel, unused, unused, () => {}, { job_id: job.jobId, items })
+
+    // Progress was visible while the script ran
+    expect(during).toEqual({ 'pr-1: start': 'review', 'pr-1: review': 'end', 'pr-2: start': 'review', 'pr-2: review': 'end', 'pr-3: start': 'review' })
+    const midway = await call('job_status', { job_id: job.jobId })
+    expect(midway).toEqual(expect.objectContaining({ done: false, counts: { end: 2, review: 1 } }))
+    expect(result.job_id).toBe(job.jobId)
+    expect(result.items.map((i: any) => i.recorded)).toEqual([2, 2, 1])
+
+    // The final sync adds only the step that was missed
+    const final = await call('sync_job', { job_id: result.job_id, items: result.items })
+    expect(final.results.map((r: any) => [r.label, r.ok, r.skipped, r.applied])).toEqual([['pr-1', true, 2, 0], ['pr-2', true, 2, 0], ['pr-3', true, 1, 1]])
+    expect(final).toEqual(expect.objectContaining({ done: true, total: 3, counts: { end: 3 } }))
+    const run = await call('current_state', { session_id: final.runs[2].id })
+    expect(run.data).toEqual({ pr_url: 'https://example.test/pr-3' })
+    expect(run.events.filter((e: any) => e.type === 'advance')).toHaveLength(2)
   })
 
   it('create_job keeps a script item that failed part-way where it stopped', async () => {

@@ -24,6 +24,7 @@ describe('MCP server', () => {
     expect(toolNames).toContain('create_job')
     expect(toolNames).toContain('job_status')
     expect(toolNames).toContain('advance_job')
+    expect(toolNames).toContain('sync_job')
     expect(toolNames).toContain('delete_job')
     expect(toolNames).toContain('export_workflow')
   })
